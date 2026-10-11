@@ -1,0 +1,78 @@
+# Example CLIProxyAPI v8 config used with this console. Copy to $PROXY_CONFIG and fill in the
+# placeholders. "weekly-reset" routing needs the proxy/ overlay; stock builds can use round-robin.
+config-version: 8
+routing:
+    strategy: "weekly-reset"
+    weekly-reset-snapshot: "/home/you/.local/share/cliproxy/console/quota-snapshot.json"
+    session-affinity: true
+    session-affinity-ttl: "24h"
+    session-affinity-subagents: true
+    cooldown:
+        disable-cooling: false
+        save-cooldown-status: false
+    retry:
+        request-retry: 2
+        max-retry-credentials: 0
+        max-retry-interval: 30
+plugins:
+    enabled: false
+requests:
+    proxy-url: ""
+observability:
+    logs:
+        request-log: false
+        debug: false
+        logging-to-file: false
+        error-logs-max-files: 0
+    pprof:
+        enable: false
+    usage:
+        usage-statistics-enabled: true
+        redis-usage-queue-retention-seconds: 3600
+access:
+    api-keys:
+        - "<client key>"
+server:
+    host: "127.0.0.1"
+    port: 8317
+    trusted-proxies: []
+    discovery:
+        enabled: false
+        service-type: _ai-gateway._tcp
+        subtypes:
+            - _chat-completions
+            - _responses
+            - _messages
+            - _generate-content
+            - _interactions
+management:
+    allow-remote: false
+    secret-key: "<management key: paste plaintext, the proxy hashes it on first start>"
+    disable-control-panel: true
+    disable-auto-update-panel: true
+oauth:
+    auth-dir: "/home/you/.local/share/cliproxy/auth"
+    providers:
+        aistudio:
+            ws-auth: true
+credentials:
+    concurrency:
+        cpa-heartbeat-timeout: 3s
+        cpa-cancel-bound: 5s
+        reclaim-grace: 5s
+        cleanup-interval: 5s
+        release-flush-interval: 250ms
+        release-max-backoff: 2s
+        busy-retry-min: 250ms
+        busy-retry-max: 1s
+        max-limit: 1000000
+    in-flight:
+        snapshot-interval: 2s
+        stale-after: 10s
+        max-part-bytes: 262144
+        max-part-count: 64
+        max-revision-bytes: 16777216
+        max-aggregate-groups: 100000
+        max-details: 10000
+        max-string-bytes: 256
+        staging-retention: 1m

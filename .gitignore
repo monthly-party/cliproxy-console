@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.deploy-tmp
+# Runtime state and secrets live in the install dir; never commit copies.
+usage.db*
+quota-*.json
+private/
+auth/
+*.log
+# Proxy build workspace
+proxy/.build/
+# Local settings, if someone keeps a copy next to the repo
+config.env

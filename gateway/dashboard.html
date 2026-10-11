@@ -1,0 +1,1633 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Subscriptions · CLI Proxy</title>
+<style>
+/* Subscriptions console for the CLI proxy.
+
+   Same instrument-panel language as the LLAgent console: graphite ground, one warm signal
+   colour, red for broken, green for fine. Accounts carry a fixed categorical hue (validated
+   palette, assigned by first-seen order, never by rank) so an account reads the same in every
+   chart. Numbers are tabular; explanations live in tooltips, not on the page. */
+
+:root {
+  color-scheme: dark light;
+  --bg: #0b0e13; --surface: #10141b; --surface-2: #161c25; --surface-3: #1d2530; --hover: #19212b;
+  --ink: #e6edf5; --ink-2: #a3b2c3; --ink-3: #6f8399;
+  --rule: #1f2833; --rule-2: #2e3a48;
+  --signal: #ffa94d; --signal-dim: rgba(255, 169, 77, 0.14);
+  --alarm: #ff7b84; --alarm-dim: rgba(255, 123, 132, 0.14);
+  --warn: #f5d061; --warn-dim: rgba(245, 208, 97, 0.14);
+  --ok: #6fdc8c; --ok-dim: rgba(111, 220, 140, 0.13);
+  --info: #74b9ff; --info-dim: rgba(116, 185, 255, 0.14);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --claude: #d97757; --codex: #8b9cf7;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --masthead: 52px; --rail-width: 11.5rem; --gutter: 1.25rem; --radius: 8px; --radius-sm: 5px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.25);
+  --pop-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px rgba(0, 0, 0, 0.45);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f5f8; --surface: #ffffff; --surface-2: #f2f5f9; --surface-3: #e7ecf2; --hover: #f0f4f8;
+    --ink: #101820; --ink-2: #44525f; --ink-3: #66788a;
+    --rule: #e1e7ee; --rule-2: #c7d1dc;
+    --signal: #b55a00; --signal-dim: rgba(181, 90, 0, 0.1);
+    --alarm: #c42b3c; --alarm-dim: rgba(196, 43, 60, 0.09);
+    --warn: #9a6b00; --warn-dim: rgba(154, 107, 0, 0.1);
+    --ok: #237a3b; --ok-dim: rgba(35, 122, 59, 0.1);
+    --info: #1662b4; --info-dim: rgba(22, 98, 180, 0.09);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+    --claude: #c15f3c; --codex: #4f5fd6;
+    --shadow: 0 1px 2px rgba(16, 24, 32, 0.06), 0 6px 18px rgba(16, 24, 32, 0.05);
+    --pop-shadow: 0 2px 4px rgba(16, 24, 32, 0.08), 0 14px 36px rgba(16, 24, 32, 0.14);
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans);
+  font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: var(--radius-sm); }
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.label { font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 650; color: var(--ink-3); }
+.mono { font-family: var(--font-mono); font-size: 0.8125rem; }
+.muted { color: var(--ink-3); }
+.icon { width: 16px; height: 16px; flex: none; }
+.icon--sm { width: 13px; height: 13px; }
+
+/* ------------------------------------------------------------------ masthead */
+.masthead {
+  position: sticky; top: 0; z-index: 20; height: var(--masthead);
+  display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr) auto; align-items: center; gap: 1rem;
+  padding: 0 var(--gutter) 0 1rem; border-bottom: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px);
+}
+.brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1rem; letter-spacing: -0.01em; }
+.brand-mark { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; background: var(--signal); color: #14100a; font-size: 0.75rem; font-weight: 800; }
+.mast-right { display: flex; align-items: center; gap: 0.5rem; }
+.pulse { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8125rem; color: var(--ink-2); padding: 0 0.4rem; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.dot--ok { background: var(--ok); }
+.dot--warn { background: var(--warn); }
+.dot--alarm { background: var(--alarm); }
+.dot--live { box-shadow: 0 0 0 0 var(--ok-dim); animation: live 2.4s ease-out infinite; }
+@keyframes live { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+
+/* -------------------------------------------------------------------- buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 0.45rem; height: 32px; padding: 0 0.8rem;
+  border: 1px solid var(--rule-2); border-radius: var(--radius-sm); background: var(--surface);
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: transform 140ms var(--ease-out), background-color 140ms ease, border-color 140ms ease;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn--primary { background: var(--signal); border-color: transparent; color: #14100a; }
+.btn--ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn--danger { background: var(--alarm); border-color: transparent; color: #fff; }
+.btn--icon { width: 32px; padding: 0; justify-content: center; }
+.btn--sm { height: 26px; padding: 0 0.55rem; font-size: 0.75rem; }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { background: var(--hover); border-color: var(--rule-2); }
+  .btn--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--signal) 88%, #fff); }
+  .btn--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--alarm) 88%, #000); }
+  .btn--ghost:hover:not(:disabled) { color: var(--ink); }
+}
+.spin { animation: spin 700ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface-2); }
+.seg button {
+  height: 26px; padding: 0 0.65rem; border: 0; border-radius: 5px; background: transparent; color: var(--ink-2);
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms var(--ease-out);
+}
+.seg button:active { transform: scale(0.97); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.seg .count { font-size: 0.6875rem; color: var(--ink-3); }
+
+.search { position: relative; }
+.search input {
+  height: 32px; width: 15rem; padding: 0 2rem 0 2rem; border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 0.8125rem;
+}
+.search input::placeholder { color: var(--ink-3); }
+.search .icon { position: absolute; left: 0.6rem; top: 8px; color: var(--ink-3); }
+.search kbd { position: absolute; right: 0.5rem; top: 7px; font: 600 0.6875rem var(--font-mono); color: var(--ink-3); border: 1px solid var(--rule-2); border-radius: 4px; padding: 0 0.3rem; }
+
+.toggle { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8125rem; color: var(--ink-2); cursor: pointer; user-select: none; }
+.toggle input { appearance: none; width: 28px; height: 16px; border-radius: 8px; background: var(--rule-2); position: relative; margin: 0; cursor: pointer; transition: background-color 160ms ease; }
+.toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 160ms var(--ease-out); }
+.toggle input:checked { background: var(--ok); }
+.toggle input:checked::after { transform: translateX(12px); }
+
+/* ---------------------------------------------------------------------- shell */
+.shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: calc(100vh - var(--masthead)); }
+.rail { position: sticky; top: var(--masthead); align-self: start; height: calc(100vh - var(--masthead)); padding: 0.75rem 0.6rem; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 0.15rem; }
+.rail a, .rail button.rail-item {
+  display: flex; align-items: center; gap: 0.65rem; padding: 0.45rem 0.65rem; border-radius: 6px; color: var(--ink-2);
+  font-weight: 600; border: 0; background: transparent; cursor: pointer; text-align: left; width: 100%;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.rail a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: inset 2px 0 0 var(--signal), var(--shadow); }
+@media (hover: hover) and (pointer: fine) { .rail a:hover, .rail button.rail-item:hover { background: var(--hover); color: var(--ink); } }
+.rail .rail-label { margin: 0.9rem 0.65rem 0.2rem; }
+.rail .n { margin-left: auto; font-size: 0.75rem; color: var(--ink-3); font-weight: 600; }
+.rail-foot { margin-top: auto; padding: 0.65rem; border: 1px solid var(--rule); border-radius: var(--radius); font-size: 0.75rem; color: var(--ink-2); display: grid; gap: 0.3rem; }
+.rail-foot div { display: flex; align-items: center; gap: 0.45rem; }
+
+main { padding: 1rem var(--gutter) 3rem; min-width: 0; }
+main:focus { outline: none; }
+.page { display: grid; gap: 0.85rem; }
+.page-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.page-head h1 { margin: 0; font-size: 1.125rem; letter-spacing: -0.01em; margin-right: auto; }
+
+/* ---------------------------------------------------------------------- tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; }
+.tile { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 0.8rem 0.95rem; box-shadow: var(--shadow); min-width: 0; }
+.tile .value { display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.15rem; font-size: 1.625rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.tile .value small { font-size: 0.875rem; font-weight: 600; color: var(--ink-3); letter-spacing: 0; }
+.tile .foot { font-size: 0.8125rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .spark { margin-left: auto; }
+.delta { font-size: 0.75rem; font-weight: 650; padding: 0 0.35rem; border-radius: 4px; }
+.delta--up { color: var(--signal); background: var(--signal-dim); }
+.delta--down { color: var(--ink-2); background: var(--surface-3); }
+.tone-alarm { color: var(--alarm); }
+.tone-warn { color: var(--warn); }
+.tone-ok { color: var(--ok); }
+
+/* --------------------------------------------------------------------- panels */
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
+.panel-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.8rem 0.95rem 0.5rem; flex-wrap: wrap; }
+.panel-head .label { margin-right: auto; }
+.panel-body { padding: 0 0.95rem 0.9rem; }
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 0.85rem; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem; }
+.info-dot { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; color: var(--ink-3); cursor: help; }
+
+/* ------------------------------------------------------------------- accounts */
+.group + .group { border-top: 1px solid var(--rule); }
+.group-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0.95rem; flex-wrap: wrap; }
+.group-head h2 { margin: 0; font-size: 0.9375rem; display: flex; align-items: center; gap: 0.5rem; }
+.group-head .sum { display: flex; gap: 1.1rem; font-size: 0.8125rem; color: var(--ink-3); margin-right: auto; margin-left: 0.6rem; flex-wrap: wrap; }
+.group-head .sum b { color: var(--ink); font-weight: 650; }
+.prov { width: 18px; height: 18px; flex: none; }
+
+.acct--live { box-shadow: inset 3px 0 0 var(--ok); }
+.masked { font: inherit; color: inherit; border: 0; margin: 0; padding: 0 0.25rem; border-radius: 4px; cursor: pointer; text-align: left;
+  background: var(--surface-3); letter-spacing: 0.02em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background-color 140ms ease, transform 140ms var(--ease-out); }
+.masked:active { transform: scale(0.98); }
+.masked[data-shown] { background: var(--warn-dim); }
+@media (hover: hover) and (pointer: fine) { .masked:not([data-shown]):hover { background: var(--rule-2); } }
+.who .email .masked { font-weight: 650; }
+.chip--live { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: var(--ok-dim); }
+.chip--live .dot { width: 6px; height: 6px; }
+.acct {
+  display: grid; align-items: center; gap: 1rem; padding: 0.7rem 0.95rem; border-top: 1px solid var(--rule);
+  grid-template-columns: 14px minmax(180px, 1.35fr) minmax(0, 2.6fr) 128px 96px 32px;
+  transition: background-color 120ms ease;
+}
+@media (hover: hover) and (pointer: fine) { .acct:hover { background: var(--hover); } }
+.swatch { width: 10px; height: 10px; border-radius: 3px; }
+.who { min-width: 0; display: grid; gap: 0.15rem; }
+.who .email { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who .meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--ink-3); flex-wrap: wrap; min-height: 20px; }
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; height: 19px; padding: 0 0.4rem; border-radius: 4px; font-size: 0.6875rem; font-weight: 650; border: 1px solid var(--rule-2); color: var(--ink-2); white-space: nowrap; }
+.chip--signal { color: var(--signal); border-color: color-mix(in srgb, var(--signal) 40%, transparent); background: var(--signal-dim); }
+.chip--ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: var(--ok-dim); }
+.chip--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-dim); }
+.chip--alarm { color: var(--alarm); border-color: color-mix(in srgb, var(--alarm) 35%, transparent); background: var(--alarm-dim); }
+.windows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; min-width: 0; }
+.win { min-width: 0; }
+.win-top { display: flex; align-items: baseline; gap: 0.4rem; font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }
+.win-top b { font-size: 0.9375rem; color: var(--ink); font-weight: 700; }
+.win-top .flag { margin-left: auto; font-weight: 650; }
+.meter { height: 4px; border-radius: 2px; background: var(--surface-3); margin: 0.3rem 0 0.25rem; overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 2px; background: var(--ok); transform-origin: left; transition: transform 420ms var(--ease-out); }
+.meter i.warn { background: var(--warn); }
+.meter i.alarm { background: var(--alarm); }
+.win-foot { font-size: 0.6875rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.win--empty { color: var(--ink-3); font-size: 0.75rem; }
+.use { display: grid; gap: 0.1rem; justify-items: start; }
+.use .big { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; }
+.use .sub { font-size: 0.6875rem; color: var(--ink-3); }
+.facts { display: flex; gap: 0.7rem; font-size: 0.8125rem; color: var(--ink-2); }
+.facts span { display: inline-flex; align-items: center; gap: 0.25rem; cursor: default; }
+.prio {
+  display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem; border-radius: 5px;
+  border: 1px solid var(--rule-2); background: transparent; color: var(--ink-3); font-size: 0.75rem; font-weight: 650; cursor: pointer;
+  transition: transform 140ms var(--ease-out), color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+.prio:active:not(:disabled) { transform: scale(0.96); }
+.prio[aria-pressed="true"] { color: var(--signal); border-color: color-mix(in srgb, var(--signal) 45%, transparent); background: var(--signal-dim); }
+.prio[aria-pressed="true"] svg { fill: currentColor; }
+@media (hover: hover) and (pointer: fine) { .prio:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-3); } }
+.facts .ticket { border: 0; background: transparent; padding: 0 0.2rem; margin: 0 -0.2rem; border-radius: 4px; cursor: pointer; font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 0.25rem; transition: transform 140ms var(--ease-out), background-color 140ms ease; }
+.facts .ticket:active { transform: scale(0.95); }
+@media (hover: hover) and (pointer: fine) { .facts .ticket:hover { background: var(--signal-dim); color: var(--signal); } }
+/* Hold to confirm: slow and deliberate while pressing, snappy on release. */
+.hold { position: relative; overflow: hidden; isolation: isolate; }
+.hold .fill { position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, #000 22%, var(--signal)); clip-path: inset(0 100% 0 0); transition: clip-path 200ms var(--ease-out); }
+.hold[data-holding] .fill { clip-path: inset(0 0 0 0); transition: clip-path 1200ms linear; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0; font-size: 0.8125rem; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; color: var(--ink); font-weight: 600; }
+.empty { padding: 1.4rem 0.95rem; color: var(--ink-3); font-size: 0.8125rem; border-top: 1px solid var(--rule); }
+
+/* --------------------------------------------------------------------- charts */
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart .axis { font: 500 10px var(--font-mono); fill: var(--ink-3); }
+.chart .grid line { stroke: var(--rule); stroke-width: 1; }
+.chart .hit { fill: transparent; cursor: crosshair; }
+.chart .hit:hover + g rect, .chart g.bar:hover rect { opacity: 0.86; }
+.chart .cross { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; pointer-events: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; font-size: 0.75rem; color: var(--ink-2); margin-top: 0.5rem; }
+.legend span { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chart-empty { display: grid; place-items: center; height: 180px; color: var(--ink-3); font-size: 0.8125rem; text-align: center; border: 1px dashed var(--rule-2); border-radius: var(--radius-sm); }
+
+/* ---------------------------------------------------------------------- lists */
+.rank { display: grid; gap: 0.45rem; margin: 0; padding: 0; list-style: none; }
+.rank li { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 0.2rem 0.75rem; align-items: center; font-size: 0.8125rem; }
+.rank .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank .num { text-align: right; font-weight: 650; }
+.rank .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.rank .bar i { display: block; height: 100%; background: var(--info); border-radius: 2px; transform-origin: left; transition: transform 420ms var(--ease-out); }
+
+table.data { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+table.data th { text-align: right; font-weight: 650; font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap; background: var(--surface); }
+table.data td { text-align: right; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data td.left, table.data th.left { text-align: left; }
+table.data tr:last-child td { border-bottom: 0; }
+@media (hover: hover) and (pointer: fine) { table.data tbody tr:hover td { background: var(--hover); } }
+table.data .who-cell { display: flex; align-items: center; gap: 0.5rem; max-width: 260px; }
+table.data .who-cell span { overflow: hidden; text-overflow: ellipsis; }
+.share { display: inline-block; width: 64px; height: 4px; border-radius: 2px; background: var(--surface-3); vertical-align: middle; margin-right: 0.45rem; overflow: hidden; }
+.share i { display: block; height: 100%; border-radius: 2px; }
+.scroll-x { overflow-x: auto; }
+
+.filters { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+select.sel { height: 32px; padding: 0 1.8rem 0 0.6rem; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface); font-size: 0.8125rem; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 14px, calc(100% - 9px) 14px; background-size: 4px 4px; background-repeat: no-repeat; }
+.status-pill { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+/* ---------------------------------------------------------- popover, tooltip */
+.menu {
+  position: fixed; z-index: 50; min-width: 190px; padding: 0.3rem; border: 1px solid var(--rule-2); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--pop-shadow); transform-origin: top right;
+  transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
+}
+.menu[data-state="closed"] { opacity: 0; transform: scale(0.96); pointer-events: none; }
+.menu button { display: flex; align-items: center; gap: 0.55rem; width: 100%; padding: 0.45rem 0.6rem; border: 0; border-radius: 5px; background: transparent; cursor: pointer; text-align: left; font-size: 0.8125rem; }
+.menu button:focus-visible, .menu button:hover { background: var(--hover); outline: none; }
+.menu button.danger { color: var(--alarm); }
+.menu hr { border: 0; border-top: 1px solid var(--rule); margin: 0.25rem 0; }
+
+.tip {
+  position: fixed; z-index: 60; max-width: 300px; padding: 0.5rem 0.65rem; border-radius: 6px; pointer-events: none;
+  background: var(--ink); color: var(--bg); font-size: 0.75rem; line-height: 1.45; box-shadow: var(--pop-shadow);
+  transition: opacity 125ms var(--ease-out), transform 125ms var(--ease-out); transform-origin: var(--tip-origin, bottom center);
+}
+.tip[data-state="closed"] { opacity: 0; transform: scale(0.97); }
+.tip[data-instant] { transition-duration: 0ms; }
+.tip b { font-weight: 700; }
+.tip .row { display: flex; align-items: center; gap: 0.45rem; }
+.tip .row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.tip .row span:last-child { margin-left: auto; padding-left: 1rem; font-weight: 650; }
+.tip hr { border: 0; border-top: 1px solid color-mix(in srgb, var(--bg) 25%, transparent); margin: 0.35rem 0; }
+
+/* --------------------------------------------------------------------- dialog */
+dialog {
+  width: min(480px, calc(100vw - 2rem)); padding: 0; border: 1px solid var(--rule-2); border-radius: 10px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--pop-shadow);
+  opacity: 1; transform: scale(1); transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out), overlay 200ms allow-discrete, display 200ms allow-discrete;
+}
+dialog::backdrop { background: rgba(5, 8, 12, 0.45); transition: opacity 200ms ease; opacity: 1; }
+@starting-style { dialog[open] { opacity: 0; transform: scale(0.96); } dialog[open]::backdrop { opacity: 0; } }
+dialog:not([open]) { opacity: 0; transform: scale(0.98); }
+.dlg-head { display: flex; align-items: center; gap: 0.6rem; padding: 1rem 1.1rem 0.4rem; }
+.dlg-head h2 { margin: 0; font-size: 1rem; margin-right: auto; }
+.dlg-body { padding: 0.4rem 1.1rem 0.4rem; display: grid; gap: 0.8rem; font-size: 0.875rem; color: var(--ink-2); }
+.dlg-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.9rem 1.1rem 1.1rem; }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.8rem; counter-reset: step; }
+.steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 0.65rem; counter-increment: step; }
+.steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-3); color: var(--ink-2); font-size: 0.75rem; font-weight: 700; }
+.steps li[data-done]::before { content: "✓"; background: var(--ok-dim); color: var(--ok); }
+.field { display: grid; gap: 0.3rem; }
+.field input { height: 34px; padding: 0 0.65rem; border: 1px solid var(--rule-2); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--font-mono); font-size: 0.8125rem; }
+.field small { color: var(--ink-3); font-size: 0.75rem; }
+.note { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.55rem 0.7rem; border-radius: 6px; font-size: 0.8125rem; background: var(--surface-2); color: var(--ink-2); }
+.note--ok { background: var(--ok-dim); color: var(--ok); }
+.note--alarm { background: var(--alarm-dim); color: var(--alarm); }
+
+/* ---------------------------------------------------------------------- toast */
+.toasts { position: fixed; right: 1rem; bottom: 1rem; z-index: 70; display: grid; gap: 0.5rem; justify-items: end; }
+.toast {
+  display: flex; align-items: center; gap: 0.55rem; max-width: 420px; padding: 0.6rem 0.8rem; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--rule-2); box-shadow: var(--pop-shadow); font-size: 0.8125rem;
+  transition: opacity 260ms ease, transform 260ms var(--ease-out);
+}
+@starting-style { .toast { opacity: 0; transform: translateY(8px); } }
+.toast[data-leaving] { opacity: 0; transform: translateY(4px); transition-duration: 160ms; }
+.toast .dot { flex: none; }
+
+/* -------------------------------------------------------------------- loading */
+.skel { border-radius: 4px; background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+@media (max-width: 1100px) {
+  .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  .acct { grid-template-columns: 14px minmax(160px, 1fr) minmax(0, 2fr) 96px 32px; }
+  .acct .use { display: none; }
+}
+@media (max-width: 760px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+  .masthead { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .acct { grid-template-columns: 14px minmax(0, 1fr) 32px; }
+  .acct .windows { grid-column: 2 / -1; grid-row: 2; }
+  .acct .facts-col { grid-column: 2 / -1; grid-row: 3; }
+  .search input { width: 10rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  .menu, .tip, dialog, .toast { transition-property: opacity !important; transform: none !important; }
+  .meter i, .rank .bar i { transition: none; }
+  .hold[data-holding] .fill { transition-duration: 0ms; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-grid" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.5" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="8" cy="12.5" r="1.3"/></symbol>
+  <symbol id="i-star" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="m8 1.8 1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9 1.5 3.5 9H8l-1 5.5L12.5 7H8z"/></symbol>
+  <symbol id="i-ticket" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1.5a1.5 1.5 0 0 0 0 3V11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9.5a1.5 1.5 0 0 0 0-3z"/><path d="M10 4v8" stroke-dasharray="1.5 1.5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.6M8 5h.01"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 3.7A6.6 6.6 0 0 1 8 3.5C12 3.5 14.5 8 14.5 8a12 12 0 0 1-1.8 2.4M4.1 4.9C2.5 6.1 1.5 8 1.5 8S4 12.5 8 12.5a6.4 6.4 0 0 0 3.3-.9M6.6 6.6a2 2 0 0 0 2.8 2.8M2 2l12 12"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-claude" viewBox="0 0 24 24"><path fill="var(--claude)" d="M12 2.2c.5 0 .8.3.9.8l.6 5.6 3.5-4.4c.3-.4.8-.5 1.2-.2.4.3.4.8.2 1.2l-3.2 4.6 5.3-1.9c.5-.2 1 0 1.1.5.2.5-.1 1-.6 1.1l-5.4 1.6 5.6.6c.5.1.8.5.8 1s-.4.8-.9.8l-5.6-.3 4.6 3.3c.4.3.5.8.2 1.2-.3.4-.8.4-1.2.2l-4.6-3.2 1.9 5.3c.2.5 0 1-.5 1.1-.5.2-1-.1-1.1-.6l-1.6-5.4-.6 5.6c-.1.5-.5.8-1 .8s-.8-.4-.8-.9l.3-5.6-3.3 4.6c-.3.4-.8.5-1.2.2-.4-.3-.4-.8-.2-1.2l3.2-4.6-5.3 1.9c-.5.2-1 0-1.1-.5-.2-.5.1-1 .6-1.1l5.4-1.6-5.6-.6c-.5-.1-.8-.5-.8-1s.4-.8.9-.8l5.6.3-4.6-3.3c-.4-.3-.5-.8-.2-1.2.3-.4.8-.4 1.2-.2l4.6 3.2-1.9-5.3c-.2-.5 0-1 .5-1.1.5-.2 1 .1 1.1.6l1.6 5.4.6-5.6c0-.5.4-.8.9-.8z"/></symbol>
+  <symbol id="i-codex" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="6" fill="var(--codex)"/><path d="m7.5 9 3 3-3 3M12.5 15.5h4" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="masthead">
+  <a class="brand" href="#/"><span class="brand-mark">S</span>Subscriptions</a>
+  <div></div>
+  <div class="mast-right">
+    <span class="pulse" id="pulse" data-tip=""><span class="dot" id="pulse-dot"></span><span id="pulse-text">Connecting</span></span>
+    <button class="btn btn--icon btn--ghost" id="privacy" aria-pressed="true" aria-label="Hide emails"><svg class="icon"><use href="#i-eye-off"/></svg></button>
+    <label class="toggle" data-tip="Refresh while this tab is visible. Quota reads come from the shared cache and never call the provider."><input type="checkbox" id="live" checked><span>Live</span></label>
+    <button class="btn btn--icon btn--ghost" id="refresh" aria-label="Refresh now" data-tip="Refresh now"><svg class="icon"><use href="#i-refresh"/></svg></button>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <a href="#/" data-route="overview"><svg class="icon"><use href="#i-grid"/></svg>Overview</a>
+    <a href="#/usage" data-route="usage"><svg class="icon"><use href="#i-chart"/></svg>Usage</a>
+    <a href="#/requests" data-route="requests"><svg class="icon"><use href="#i-list"/></svg>Requests</a>
+    <p class="label rail-label">Providers</p>
+    <button class="rail-item" data-provider="claude"><svg class="prov"><use href="#i-claude"/></svg>Claude<span class="n" id="n-claude">–</span></button>
+    <button class="rail-item" data-provider="codex"><svg class="prov"><use href="#i-codex"/></svg>Codex<span class="n" id="n-codex">–</span></button>
+    <div class="rail-foot" id="rail-foot">
+      <div><span class="dot" id="foot-proxy"></span><span id="foot-proxy-text">Proxy</span></div>
+      <div><span class="dot" id="foot-ledger"></span><span id="foot-ledger-text">Token ledger</span></div>
+    </div>
+  </nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<div class="menu" id="menu" role="menu" data-state="closed" hidden></div>
+<div class="tip" id="tip" role="tooltip" data-state="closed" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<dialog id="dlg-remove" aria-labelledby="remove-title">
+  <div class="dlg-head"><h2 id="remove-title">Remove from proxy?</h2></div>
+  <div class="dlg-body">
+    <p style="margin:0">Removes the sign-in that <b id="remove-who"></b> keeps on this proxy. The provider account and subscription stay active, and you can add it again by signing in.</p>
+    <div class="note note--alarm" id="remove-error" hidden></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" value="cancel" data-close>Cancel</button>
+    <button class="btn btn--danger" id="remove-confirm">Remove</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-reset" aria-labelledby="reset-title">
+  <div class="dlg-head"><svg class="prov" id="reset-icon"><use href="#i-claude"/></svg><h2 id="reset-title">Use a reset ticket?</h2></div>
+  <div class="dlg-body">
+    <dl class="kv" id="reset-facts"></dl>
+    <div class="note" id="reset-note" hidden></div>
+    <p style="margin:0">A used ticket can't be given back. The proxy checks with the provider first and stops if no ticket applies right now.</p>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" data-close>Cancel</button>
+    <button class="btn btn--primary hold" id="reset-confirm"><span class="fill" aria-hidden="true"></span><span id="reset-label">Hold to use 1 ticket</span></button>
+  </div>
+</dialog>
+
+<dialog id="dlg-add" aria-labelledby="add-title">
+  <div class="dlg-head"><svg class="prov" id="add-icon"><use href="#i-claude"/></svg><h2 id="add-title">Add account</h2>
+    <button class="btn btn--icon btn--ghost" data-close aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-body">
+    <ol class="steps">
+      <li id="step-open"><div><div style="margin-bottom:0.45rem">Open the provider sign-in and choose the account to add.</div>
+        <a class="btn" id="add-open" target="_blank" rel="noopener noreferrer" aria-disabled="true"><svg class="icon"><use href="#i-ext"/></svg><span>Preparing sign-in…</span></a></div></li>
+      <li id="step-approve"><div>Approve access. The browser then lands on a <span class="mono">localhost</span> page that fails to load — that is expected.</div></li>
+      <li id="step-paste"><div class="field">
+        <label for="add-callback">Paste the full address from that page</label>
+        <input id="add-callback" type="password" autocomplete="off" spellcheck="false" placeholder="http://localhost:…/callback?code=…&amp;state=…">
+        <small>Kept only for this sign-in. Never paste a token or management key.</small></div></li>
+    </ol>
+    <div class="note" id="add-status" role="status" hidden></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" id="add-cancel">Cancel</button>
+    <button class="btn btn--primary" id="add-submit" disabled>Connect account</button>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+const API = '/v8/management';
+const TZ = -new Date().getTimezoneOffset();
+const SLOTS = 8;
+const LOW = 40, CRITICAL = 15;           // remaining-% thresholds, as in the previous console
+const QUOTA_NOTE = 'Usage and reset times come from the provider. Credentials stay on the proxy; no reset credits are spent.';
+const PRIORITY_REASONS = {
+  earliest_known_weekly_reset: 'Earliest known weekly reset with quota remaining.',
+  fresh_quota_remaining: 'Fresh quota remains.', weekly_exhausted: 'Weekly quota is exhausted.',
+  five_hour_exhausted: '5-hour quota is exhausted.', quota_exhausted: 'Quota is exhausted.',
+  disabled: 'This proxy account is disabled.', known_unavailable: 'This proxy account is unavailable.',
+  known_cooldown: 'This proxy account has a known cooldown.', quota_missing: 'Quota is unavailable.',
+  quota_stale: 'Quota is stale.', quota_reset_unknown: 'Weekly reset time is unknown.',
+  model_context_missing: 'The model context is unavailable.',
+  authentication_or_availability_unknown: 'Sign-in or availability is unknown.', quota_shape_unknown: 'Quota details are unknown.',
+};
+const PREFERENCE_ERRORS = {
+  preference_changed: 'Accounts changed since this page loaded. Refreshed — try again.',
+  unmanaged_priority: 'A priority was set outside this console. Clear it in the proxy first.',
+  preference_account_unavailable: 'That account is no longer on the proxy.',
+  preference_not_confirmed: 'The proxy did not confirm the change. Refreshed to show the current state.',
+  preference_failed_restored: 'The change failed and the previous priority was restored.',
+  preference_rollback_unconfirmed: 'The change failed and the rollback could not be confirmed. Check the accounts before retrying.',
+};
+
+const state = {
+  route: 'overview', provider: 'all', filter: '', live: true,
+  credentials: null, quota: null, usage24: null, usage: {}, status: null, history: {}, requests: null,
+  usageRange: localStorage.getItem('usageRange') || '7d', usageMetric: localStorage.getItem('usageMetric') || 'total',
+  historyRange: '7d', reqFilter: { account: '', failed: '', model: '' },
+  privacy: localStorage.getItem('privacy') !== 'off', revealed: new Set(),
+  proxyOk: null, liveView: null, savingPriority: null, busy: new Set(), dirty: false, now: Date.now(),
+};
+
+/* ------------------------------------------------------------------ helpers */
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const icon = (id, cls = 'icon') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+const provIcon = (p) => `<svg class="prov" aria-hidden="true"><use href="#i-${p === 'codex' ? 'codex' : 'claude'}"/></svg>`;
+const provName = (p) => (p === 'codex' ? 'Codex' : 'Claude');
+
+function compact(n) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace(/\.0$/, '') + 'B';
+  if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+  if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'K';
+  return String(Math.round(n));
+}
+const full = (n) => (n == null ? '—' : Number(n).toLocaleString());
+const pct = (n, digits = 0) => (n == null || !Number.isFinite(n) ? '—' : n.toFixed(digits) + '%');
+function duration(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '—';
+  const m = Math.max(0, Math.round(ms / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${mm}m`;
+  return `${mm}m`;
+}
+function ago(ts) {
+  if (!ts) return 'never';
+  const s = Math.round((state.now - ts) / 1000);
+  if (s < 45) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const stamp = (ts) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const parseTime = (v) => { const t = typeof v === 'number' ? v * 1000 : Date.parse(v); return Number.isFinite(t) ? t : null; };
+const ms = (v) => (v == null ? '—' : v >= 10000 ? (v / 1000).toFixed(0) + 's' : v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms');
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(API + path, {
+    method, credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) { const e = new Error((data && data.error) || `HTTP ${res.status}`); e.status = res.status; e.code = data && data.error; throw e; }
+  return data;
+}
+
+function toast(text, tone = 'ok') {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<span class="dot dot--${tone}"></span><span>${esc(text)}</span>`;
+  $('#toasts').append(el);
+  let timer = setTimeout(leave, tone === 'alarm' ? 7000 : 3800);
+  el.addEventListener('mouseenter', () => clearTimeout(timer));
+  el.addEventListener('mouseleave', () => { timer = setTimeout(leave, 1500); });
+  function leave() { el.dataset.leaving = ''; setTimeout(() => el.remove(), 170); }
+}
+
+/* --------------------------------------------------------------- data model */
+function labels() {
+  // Union of history labels (survive removal) and live credentials.
+  const out = {};
+  for (const src of [state.usage24, ...Object.values(state.usage), state.requests]) {
+    if (src && src.labels) Object.assign(out, src.labels);
+  }
+  for (const f of state.credentials?.files || []) {
+    out[f.auth_index] = { ...(out[f.auth_index] || {}), auth_index: f.auth_index, provider: canon(f.provider), email: f.email || out[f.auth_index]?.email, removed_at: null };
+  }
+  return out;
+}
+const canon = (p) => (p === 'anthropic' ? 'claude' : p);
+function slots() {
+  // Colour follows the account, not its rank: stable order by provider, then first seen.
+  const all = Object.values(labels());
+  all.sort((a, b) => (a.provider || '').localeCompare(b.provider || '') || (a.first_seen || 0) - (b.first_seen || 0) || a.auth_index.localeCompare(b.auth_index));
+  const map = {};
+  all.forEach((a, i) => { map[a.auth_index] = i < SLOTS ? `var(--s${i + 1})` : 'var(--ink-3)'; });
+  return map;
+}
+function aliasOf(index) {
+  // "Claude 2": numbered by the same stable order that assigns colours, so legends match rows.
+  const all = Object.values(labels()).sort((a, b) => (a.provider || '').localeCompare(b.provider || '') || (a.first_seen || 0) - (b.first_seen || 0) || a.auth_index.localeCompare(b.auth_index));
+  const me = all.find((a) => a.auth_index === index);
+  return `${provName(me?.provider)} ${all.filter((a) => a.provider === me?.provider).indexOf(me) + 1}`;
+}
+function maskText(email) {
+  if (!email) return 'hidden';
+  const [local, domain = ''] = email.split('@');
+  const dot = domain.lastIndexOf('.');
+  return `${local.charAt(0)}•••@${domain.charAt(0)}•••${dot > 0 ? domain.slice(dot) : ''}`;
+}
+function emailHTML(index, fallback = 'this account', spot = 'row') {
+  // Full-email spots: masked until clicked; any click elsewhere masks them again.
+  // The spot keeps a peek local: clicking the row's email doesn't unmask the same
+  // account in a tile, and a background refresh keeps the peeked one open.
+  const email = labels()[index]?.email;
+  if (!email) return esc(fallback);
+  if (!state.privacy) return esc(email);
+  const key = `${index}|${spot}`, shown = state.revealed.has(key);
+  return `<button type="button" class="masked" data-reveal="${esc(key)}" ${shown ? 'data-shown' : ''} aria-label="${shown ? 'Email shown' : 'Show email'}">${esc(shown ? email : maskText(email))}</button>`;
+}
+const nameOf = (index) => (state.privacy ? aliasOf(index) : labels()[index]?.email || `Account ${String(index).slice(0, 6)}`);
+const displayName = (a) => (state.privacy ? aliasOf(a.auth_index) : a.email || 'this account');
+function shortName(index) {
+  if (state.privacy) return aliasOf(index);
+  // Local part of the email; add the provider when the same mailbox signs in to both.
+  const all = labels(), local = nameOf(index).replace(/@.*/, '');
+  const twin = Object.values(all).some((a) => a.auth_index !== index && (a.email || '').replace(/@.*/, '') === local);
+  return twin ? `${local} · ${provName(all[index]?.provider)}` : local;
+}
+
+function accounts() {
+  const files = state.credentials?.files || [];
+  const quota = Object.fromEntries((state.quota?.accounts || []).map((q) => [q.auth_index, q]));
+  const usage = Object.fromEntries((state.usage24?.accounts || []).map((u) => [u.auth_index, u]));
+  const week = Object.fromEntries((state.usage['7d']?.accounts || []).map((u) => [u.auth_index, u]));
+  return files.map((f) => ({ ...f, provider: canon(f.provider), q: quota[f.auth_index], u: usage[f.auth_index], w: week[f.auth_index] }));
+}
+
+function windowsOf(a) {
+  // Normalised provider windows -> weekly, 5-hour, model-scoped weekly.
+  const list = a.q?.windows || [];
+  const weekly = list.find((w) => w.kind === 'weekly' && !w.model_prefix && !w.model) || null;
+  const five = list.find((w) => w.kind === 'five_hour' && !w.model_prefix && !w.model) || null;
+  const scoped = list.filter((w) => w.kind === 'weekly' && (w.model_prefix || w.model));
+  const preferred = scoped.find((w) => /fable/i.test(w.model_prefix || w.model || '')) || scoped[0] || null;
+  return { weekly, five, scoped: preferred };
+}
+const remaining = (w) => (w && Number.isFinite(w.used_percent) ? Math.max(0, Math.min(100, 100 - w.used_percent)) : null);
+const tone = (r) => (r == null ? '' : r < CRITICAL ? 'alarm' : r < LOW ? 'warn' : '');
+function modelLabel(w) {
+  const m = (w.model_prefix || w.model || '').replace(/^claude-/, '');
+  return m ? m.charAt(0).toUpperCase() + m.slice(1) : 'Model';
+}
+
+/* ---------------------------------------------------------------- tooltips */
+const tip = $('#tip');
+let tipTimer = null, tipHideTimer = null, tipWarm = false, tipFor = null;
+function showTip(target) {
+  const html = target.dataset.tipHtml ? decodeURIComponent(target.dataset.tipHtml) : esc(target.dataset.tip);
+  if (!html) return;
+  tipFor = target;
+  tip.innerHTML = html;
+  tip.hidden = false;
+  if (tipWarm) tip.dataset.instant = ''; else delete tip.dataset.instant;
+  const r = target.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  let top = r.top - t.height - 8, origin = 'bottom center';
+  if (top < 60) { top = r.bottom + 8; origin = 'top center'; }
+  const left = Math.max(8, Math.min(window.innerWidth - t.width - 8, r.left + r.width / 2 - t.width / 2));
+  tip.style.top = top + 'px'; tip.style.left = left + 'px'; tip.style.setProperty('--tip-origin', origin);
+  requestAnimationFrame(() => { tip.dataset.state = 'open'; });
+  tipWarm = true;
+}
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipFor = null;
+  tip.dataset.state = 'closed';
+  clearTimeout(tipHideTimer);
+  // Hovering the next control within 300ms opens instantly: the toolbar feels faster.
+  tipHideTimer = setTimeout(() => { tipWarm = false; if (!tipFor) tip.hidden = true; }, 300);
+}
+document.addEventListener('pointerover', (e) => {
+  const t = e.target.closest('[data-tip],[data-tip-html]');
+  if (!t || t === tipFor) return;
+  if (!t.dataset.tip && !t.dataset.tipHtml) return;
+  clearTimeout(tipTimer);
+  if (tipWarm) showTip(t); else tipTimer = setTimeout(() => showTip(t), 420);
+});
+document.addEventListener('pointerout', (e) => {
+  const t = e.target.closest('[data-tip],[data-tip-html]');
+  if (t && !t.contains(e.relatedTarget)) hideTip();
+});
+document.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tip],[data-tip-html]'); if (t && (t.dataset.tip || t.dataset.tipHtml)) showTip(t); });
+document.addEventListener('focusout', hideTip);
+// A press starts an action (menu, dialog, hold); the tooltip has done its job.
+document.addEventListener('pointerdown', () => { if (tipFor) { hideTip(); tip.hidden = true; } }, true);
+const tipAttr = (html) => `data-tip-html="${encodeURIComponent(html)}"`;
+
+/* -------------------------------------------------------------------- menu */
+const menu = $('#menu');
+let menuFor = null;
+function openMenu(trigger, items) {
+  menuFor = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.innerHTML = items.map((it, i) => it === '-' ? '<hr>' :
+    `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${icon(it.icon)}${esc(it.label)}</button>`).join('');
+  menu.hidden = false;
+  const r = trigger.getBoundingClientRect(), m = menu.getBoundingClientRect();
+  const below = r.bottom + 6 + m.height < window.innerHeight;
+  menu.style.top = (below ? r.bottom + 6 : r.top - m.height - 6) + 'px';
+  menu.style.left = Math.max(8, r.right - m.width) + 'px';
+  menu.style.transformOrigin = below ? 'top right' : 'bottom right';
+  menu.onclick = (e) => { const b = e.target.closest('button[data-i]'); if (!b) return; const it = items[+b.dataset.i]; closeMenu(); it.run(); };
+  requestAnimationFrame(() => { menu.dataset.state = 'open'; menu.querySelector('button')?.focus(); });
+}
+function closeMenu(focusBack = false) {
+  if (!menuFor) return;
+  menuFor.setAttribute('aria-expanded', 'false');
+  if (focusBack) menuFor.focus();
+  menuFor = null;
+  menu.dataset.state = 'closed';
+  setTimeout(() => { if (!menuFor) menu.hidden = true; if (state.dirty) render(); }, 160);
+}
+document.addEventListener('pointerdown', (e) => { if (menuFor && !menu.contains(e.target) && !menuFor.contains(e.target)) closeMenu(); });
+menu.addEventListener('keydown', (e) => {
+  const items = [...menu.querySelectorAll('button:not(:disabled)')];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeMenu(true); }
+});
+
+/* ------------------------------------------------------------------ charts */
+function stackedBars(opts) { return chartSlot((W) => drawBars({ ...opts, W }), opts.height || 200); }
+function drawBars({ buckets, start, size, keys, colors, metric, height = 200, names, W }) {
+  // Stacked by account; 2px surface gap between segments; rounded data-end only on the top segment.
+  const n = buckets.length;
+  const totals = buckets.map((b) => keys.reduce((s, k) => s + (b[k]?.[metric] || 0), 0));
+  const max = Math.max(...totals, 0);
+  if (!max) return `<div class="chart-empty" style="height:${height}px">No traffic in this window yet.<br>Tracking started ${esc(ago(state.status?.tracking_since * 1000))}.</div>`;
+  const padL = 44, padR = 6, padT = 6, padB = 22, H = height;
+  const ih = H - padT - padB, iw = W - padL - padR, step = iw / n, bw = Math.max(2, Math.min(28, step * 0.62));
+  const ticks = niceTicks(max);
+  const y = (v) => padT + ih - (v / ticks[ticks.length - 1]) * ih;
+  let svg = `<g class="grid">${ticks.map((t) => `<line x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>`;
+  svg += ticks.map((t) => `<text class="axis" x="${padL - 8}" y="${y(t) + 3}" text-anchor="end">${compact(t)}</text>`).join('');
+  const every = size >= 6 * 3600 && size < 86400 ? Math.round(86400 / size) : Math.ceil(n / Math.max(2, Math.floor(iw / 70)));
+  for (let i = 0; i < n; i++) {
+    const x = padL + i * step + (step - bw) / 2;
+    let base = padT + ih;
+    const segs = keys.map((k) => ({ k, v: buckets[i][k]?.[metric] || 0 })).filter((s) => s.v > 0);
+    let rects = '';
+    segs.forEach((s, j) => {
+      const h = (s.v / ticks[ticks.length - 1]) * ih;
+      const top = j === segs.length - 1;
+      const gap = j > 0 ? 2 : 0;
+      const hh = Math.max(0.5, h - gap);
+      base -= h;
+      rects += top && hh > 4
+        ? `<path d="${roundTop(x, base, bw, hh, Math.min(4, bw / 2))}" fill="${colors[s.k]}"/>`
+        : `<rect x="${x}" y="${base}" width="${bw}" height="${hh}" fill="${colors[s.k]}"/>`;
+    });
+    const t0 = (start + i * size) * 1000;
+    const rows = segs.slice().reverse().map((s) => `<div class="row"><i style="background:${colors[s.k]}"></i><span>${esc(names(s.k))}</span><span>${metric === 'requests' ? full(s.v) : compact(s.v)}</span></div>`).join('');
+    const head = `<b>${esc(bucketLabel(t0, size))}</b> · ${metric === 'requests' ? full(totals[i]) + ' req' : compact(totals[i]) + ' tokens'}`;
+    svg += `<g class="bar" ${totals[i] ? tipAttr(head + (rows ? '<hr>' + rows : '')) : ''}><rect class="hit" x="${padL + i * step}" y="${padT}" width="${step}" height="${ih}"/>${rects}</g>`;
+    const midnight = size >= 6 * 3600 && size < 86400 ? new Date(t0).getHours() === 0 : i % every === 0;
+    if (midnight) {
+      svg += `<text class="axis" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(axisLabel(t0, size))}</text>`;
+    }
+  }
+  return `<div class="chart"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${svg}</svg></div>`;
+}
+const pendingCharts = [];
+function chartSlot(draw, height) {
+  // Charts draw at the container's real pixel width after layout, so text never stretches.
+  pendingCharts.push(draw);
+  return `<div class="chart-slot" data-chart="${pendingCharts.length - 1}" style="min-height:${height}px"></div>`;
+}
+function drawCharts() {
+  const draws = pendingCharts.splice(0);
+  document.querySelectorAll('.chart-slot[data-chart]').forEach((el) => {
+    const draw = draws[+el.dataset.chart];
+    if (draw) el.innerHTML = draw(Math.max(240, Math.floor(el.clientWidth)));
+  });
+}
+function roundTop(x, y, w, h, r) {
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function niceTicks(max) {
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
+  const out = [];
+  for (let v = 0; v <= max + step * 0.001; v += step) out.push(v);
+  if (out[out.length - 1] < max) out.push(out[out.length - 1] + step);
+  return out;
+}
+function bucketLabel(t, size) {
+  const d = new Date(t);
+  if (size >= 86400) return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const e = new Date(t + size * 1000);
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString([], { hour: 'numeric' })}–${e.toLocaleTimeString([], { hour: 'numeric' })}`;
+}
+function axisLabel(t, size) {
+  const d = new Date(t);
+  if (size >= 86400) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (size >= 6 * 3600) return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function sparkline(values, color = 'var(--info)', w = 72, h = 22) {
+  const max = Math.max(...values, 0);
+  if (!max) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"><line x1="0" x2="${w}" y1="${h - 1}" y2="${h - 1}" stroke="var(--rule-2)" stroke-width="1.5"/></svg>`;
+  const pts = values.map((v, i) => `${(i / Math.max(1, values.length - 1)) * w},${h - 1 - (v / max) * (h - 3)}`).join(' ');
+  return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+function lineChart(opts) { return chartSlot((W) => drawLines({ ...opts, W }), opts.height || 220); }
+function drawLines({ series, start, end, height = 220, colors, W }) {
+  // Weekly-used % per account. One y axis (0–100). Reset drops show as vertical falls.
+  if (!series.some((s) => s.points.length > 1)) {
+    const first = Math.min(...series.flatMap((s) => s.points.map((p) => p[0])), Date.now() / 1000);
+    return `<div class="chart-empty" style="height:${height}px">Quota history started ${esc(stamp(first * 1000))}.<br>One sample per provider check, about every 10 minutes.</div>`;
+  }
+  const padL = 40, padR = 112, padT = 8, padB = 22, H = height, ih = H - padT - padB, iw = W - padL - padR;
+  const x = (t) => padL + ((t - start) / (end - start)) * iw;
+  const y = (v) => padT + ih - (v / 100) * ih;
+  let svg = `<g class="grid">${[0, 25, 50, 75, 100].map((v) => `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>`;
+  svg += [0, 50, 100].map((v) => `<text class="axis" x="${padL - 8}" y="${y(v) + 3}" text-anchor="end">${v}%</text>`).join('');
+  const days = Math.round((end - start) / 86400);
+  const stepDays = Math.max(1, Math.ceil(days / Math.max(2, Math.floor(iw / 70))));
+  for (let d = 0; d <= days; d += stepDays) {
+    const t = start + d * 86400;
+    svg += `<text class="axis" x="${x(t)}" y="${H - 6}" text-anchor="middle">${esc(new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' }))}</text>`;
+  }
+  const labelsAt = [];
+  for (const s of series) {
+    if (!s.points.length) continue;
+    const pts = s.points.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="${colors[s.auth_index]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const [lt, lv] = s.points[s.points.length - 1];
+    svg += `<circle cx="${x(lt)}" cy="${y(lv)}" r="4" fill="${colors[s.auth_index]}" stroke="var(--surface)" stroke-width="2"/>`;
+    labelsAt.push({ y: y(lv), x: x(lt), text: `${shortName(s.auth_index)} ${Math.round(lv)}%` });
+  }
+  // Direct labels at line ends, nudged apart so they never collide.
+  labelsAt.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labelsAt.length; i++) if (labelsAt[i].y - labelsAt[i - 1].y < 12) labelsAt[i].y = labelsAt[i - 1].y + 12;
+  svg += labelsAt.map((l) => `<text class="axis" style="fill:var(--ink-2)" x="${W - padR + 8}" y="${l.y + 3}">${esc(l.text)}</text>`).join('');
+  // Hover: crosshair + values at the nearest sample per account.
+  const cols = 60;
+  for (let c = 0; c < cols; c++) {
+    const t = start + ((c + 0.5) / cols) * (end - start);
+    const rows = series.map((s) => {
+      let best = null;
+      for (const p of s.points) if (p[0] <= t) best = p;
+      return best ? `<div class="row"><i style="background:${colors[s.auth_index]}"></i><span>${esc(shortName(s.auth_index))}</span><span>${Math.round(best[1])}% used</span></div>` : '';
+    }).join('');
+    if (!rows) continue;
+    svg += `<rect class="hit" x="${padL + (c / cols) * iw}" y="${padT}" width="${iw / cols}" height="${ih}" ${tipAttr(`<b>${esc(stamp(t * 1000))}</b><hr>${rows}`)}/>`;
+  }
+  return `<div class="chart"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${svg}</svg></div>`;
+}
+
+/* ---------------------------------------------------------------- overview */
+function overviewPage() {
+  const list = accounts();
+  const colors = slots();
+  const u = state.usage24;
+  const shown = list.filter((a) => (state.provider === 'all' || a.provider === state.provider) &&
+    (!state.filter || (a.email || '').toLowerCase().includes(state.filter)));
+  const ready = list.filter((a) => a.status === 'active' && !a.disabled && !a.unavailable).length;
+  const weeklyAll = list.map((a) => ({ a, r: remaining(windowsOf(a).weekly), w: windowsOf(a).weekly })).filter((x) => x.r != null);
+  const lowest = weeklyAll.slice().sort((p, q) => p.r - q.r)[0];
+  const resets = weeklyAll.map((x) => ({ ...x, t: parseTime(x.w.reset_at) })).filter((x) => x.t && x.t > state.now).sort((p, q) => p.t - q.t);
+  const series = (u?.series || []).map((p) => p.total || 0);
+  const tokens = u?.totals.total, prev = u?.previous.total;
+  const fails = u?.totals.failed || 0, reqs = u?.totals.requests || 0;
+
+  const tiles = `
+  <section class="tiles" aria-label="Summary">
+    <div class="tile" id="live-tile" data-tip="Requests in flight right now, by account, from the proxy's own routing log.">${liveTile()}</div>
+    <a class="tile" href="#/usage" ${tipAttr(`<b>${full(tokens)}</b> tokens in the last 24 hours<br>${tokenBreakdown(u?.totals)}`)}>
+      <div class="label">Tokens · 24h</div>
+      <div class="value">${u ? compact(tokens) : skel(64)}${deltaChip(tokens, prev)}${sparkline(series, 'var(--info)')}</div>
+      <div class="foot">${u ? `${compact(u.totals.cache_read)} from cache` : '&nbsp;'}</div></a>
+    <a class="tile" href="#/requests">
+      <div class="label">Requests · 24h</div>
+      <div class="value">${u ? full(reqs) : skel(48)}</div>
+      <div class="foot ${fails ? 'tone-alarm' : ''}">${u ? (fails ? `${full(fails)} failed · ${pct(fails / Math.max(1, reqs) * 100, 1)}` : `${full(u.totals.sessions)} sessions`) : '&nbsp;'}</div></a>
+    <div class="tile">
+      <div class="label">Lowest weekly</div>
+      <div class="value ${lowest ? 'tone-' + (tone(lowest.r) || 'ok') : ''}">${lowest ? pct(lowest.r) + '<small>left</small>' : skel(48)}</div>
+      <div class="foot">${lowest ? emailHTML(lowest.a.auth_index, '', 'tile-lowest') : '&nbsp;'}</div></div>
+    <div class="tile" ${resets[0] ? `data-tip="${esc(stamp(resets[0].t))}"` : ''}>
+      <div class="label">Next weekly reset</div>
+      <div class="value">${resets[0] ? duration(resets[0].t - state.now) : (state.quota ? '—' : skel(56))}</div>
+      <div class="foot">${resets[0] ? emailHTML(resets[0].a.auth_index, '', 'tile-reset') : '&nbsp;'}</div></div>
+    <div class="tile">
+      <div class="label">Accounts</div>
+      <div class="value">${state.credentials ? `${ready}<small>/ ${list.length} ready</small>` : skel(48)}</div>
+      <div class="foot">${state.credentials ? (list.length - ready ? `<span class="tone-warn">${list.length - ready} need attention</span>` : 'All routing') : '&nbsp;'}</div></div>
+  </section>`;
+
+  const groups = ['claude', 'codex'].filter((p) => state.provider === 'all' || state.provider === p).map((p) => {
+    const all = list.filter((a) => a.provider === p);
+    const rows = shown.filter((a) => a.provider === p);
+    return `<section class="group" aria-labelledby="g-${p}">
+      <div class="group-head">
+        <h2 id="g-${p}">${provIcon(p)}${provName(p)} <span class="muted" style="font-weight:500;font-size:0.8125rem">${all.length}</span></h2>
+        <div class="sum">${providerSummary(all)}</div>
+        <button class="btn btn--sm" data-add="${p}">${icon('plus', 'icon icon--sm')}Add</button>
+      </div>
+      ${rows.map((a) => accountRow(a, colors)).join('') || `<div class="empty">${state.credentials ? (state.filter ? 'No accounts match this filter.' : `No ${provName(p)} accounts connected.`) : skelRows()}</div>`}
+    </section>`;
+  }).join('');
+
+  const counts = { all: list.length, claude: list.filter((a) => a.provider === 'claude').length, codex: list.filter((a) => a.provider === 'codex').length };
+  const keys = (u?.accounts || []).map((a) => a.auth_index);
+  const buckets = (u?.series || []).map((_, i) => Object.fromEntries((u.accounts || []).map((a) => [a.auth_index, a.series[i]])));
+
+  return `
+  <div class="page">
+    ${tiles}
+    <section class="panel" aria-label="Accounts">
+      <div class="panel-head">
+        <span class="label">Accounts</span>
+        <span class="info-dot" data-tip="${esc(QUOTA_NOTE)}">${icon('info', 'icon icon--sm')}</span>
+        <div class="seg" role="group" aria-label="Filter by provider">
+          ${['all', 'claude', 'codex'].map((p) => `<button data-filter-provider="${p}" aria-pressed="${state.provider === p}">${p === 'all' ? 'All' : provIcon(p) + provName(p)}<span class="count">${counts[p]}</span></button>`).join('')}
+        </div>
+        <label class="search"><span class="visually-hidden">Filter by account email</span>${icon('search')}
+          <input id="filter" type="search" placeholder="Filter by email" value="${esc(state.filter)}" autocomplete="off"><kbd>/</kbd></label>
+      </div>
+      ${groups}
+    </section>
+    <div class="grid-2">
+      <section class="panel">
+        <div class="panel-head"><span class="label">Tokens · last 24 hours</span><a class="btn btn--sm btn--ghost" href="#/usage">Usage →</a></div>
+        <div class="panel-body">${u ? stackedBars({ buckets, start: u.start, size: u.bucket_seconds, keys, colors, metric: 'total', names: nameOf, height: 190 }) + legend(keys, colors) : skelBlock(190)}</div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><span class="label">Who used it · 24h</span></div>
+        <div class="panel-body">${u ? rankList(u.clients.map((c) => ({ name: c.client, value: c.total, sub: `${full(c.requests)} req · ${full(c.sessions)} sessions` }))) : skelBlock(120)}
+          <div class="label" style="margin:1rem 0 0.5rem">Top models</div>
+          ${u ? rankList(u.models.slice(0, 5).map((m) => ({ name: m.model, value: m.total, sub: `${full(m.requests)} req` }))) : ''}</div>
+      </section>
+    </div>
+  </div>`;
+}
+
+function providerSummary(all) {
+  const weekly = all.map((a) => remaining(windowsOf(a).weekly)).filter((v) => v != null);
+  const five = all.map((a) => remaining(windowsOf(a).five)).filter((v) => v != null);
+  const resets = all.map((a) => parseTime(windowsOf(a).weekly?.reset_at)).filter((t) => t && t > state.now).sort((a, b) => a - b);
+  const range = (v) => (v.length ? (Math.min(...v) === Math.max(...v) ? pct(Math.min(...v)) : `${Math.round(Math.min(...v))}–${pct(Math.max(...v))}`) : '—');
+  const loaded = all.filter((a) => a.q && !a.q.cache?.stale).length;
+  return `<span data-tip="Weekly quota remaining, lowest to highest across accounts">Weekly <b>${range(weekly)}</b></span>
+    <span data-tip="5-hour quota remaining across accounts">5h <b>${range(five)}</b></span>
+    <span ${resets[0] ? `data-tip="${esc(stamp(resets[0]))}"` : ''}>Next reset <b>${resets[0] ? duration(resets[0] - state.now) : '—'}</b></span>
+    ${loaded < all.length && state.quota ? `<span class="tone-warn" data-tip="Accounts with a fresh provider snapshot. Stale ones show the last confirmed values.">${loaded}/${all.length} fresh</span>` : ''}`;
+}
+
+function accountRow(a, colors) {
+  const { weekly, five, scoped } = windowsOf(a);
+  const cache = a.q?.cache;
+  const statusChip = a.disabled ? '<span class="chip chip--alarm">Disabled</span>'
+    : a.unavailable ? '<span class="chip chip--alarm">Unavailable</span>'
+    : a.status === 'active' ? '' : `<span class="chip chip--warn">${esc(a.status || 'Status unknown')}</span>`;
+  const plan = a.q?.extras?.plan_type || a.plan_type;
+  const pref = a.routing_preference;
+  const preferred = pref?.preferred_auth_index === a.auth_index;
+  const prio = a.quota_priority;
+  let prioChip = '';
+  if (prio && !preferred) {
+    const reason = PRIORITY_REASONS[prio.reasonCode] || '';
+    const scope = 'Expected for a new session from quota and reset time; the proxy still checks model, sign-in, cooldown, configured priority and session affinity.';
+    const map = {
+      'quota-candidate': [pref?.mode === 'preferred' ? 'Fallback order' : 'Next by quota', 'chip--signal'],
+      'quota-eligible': ['Quota available', 'chip--ok'], 'quota-blocked': ['Quota blocked', 'chip--alarm'], unknown: ['Priority unknown', ''],
+    }[prio.kind] || ['Priority unknown', ''];
+    const help = prio.kind === 'unknown' ? 'No fresh quota/reset candidate is available. This does not identify the account currently handling a request.' : scope;
+    prioChip = `<span class="chip ${map[1]}" ${tipAttr(`<b>${esc(reason)}</b><br>${esc(help)}${prio.model ? `<hr>Model context: ${esc(prio.model)}` : ''}`)}>${map[0]}</span>`;
+  }
+  const staleChip = cache?.stale && a.q?.status !== 200 ? `<span class="chip chip--warn" data-tip="Refresh failed${cache.error_status ? ' (HTTP ' + esc(cache.error_status) + ')' : ''}. Showing the last confirmed snapshot.">Stale</span>`
+    : cache?.stale ? `<span class="chip chip--warn" data-tip="Showing the last confirmed provider snapshot; the next check is scheduled.">Stale</span>` : '';
+  const updated = parseTime(cache?.observed_at), next = parseTime(cache?.next_check_at);
+  const metaTip = `${updated ? 'Provider usage observed ' + esc(stamp(updated)) : 'Not checked yet'}${next ? '<br>Next check ' + esc(clock(next)) : ''}`;
+
+  const act = a.activity;
+  const reqs10 = act ? act.completed_in_current_window : null;
+  const allowance = a.q?.extras?.claude_reset_allowance;
+  const credits = a.q?.extras?.reset_credits;
+  let resetFact = '';
+  if (a.provider === 'claude') {
+    resetFact = allowance
+      ? `<${allowance.remaining_count > 0 ? `button class="ticket" data-ticket="${esc(a.auth_index)}" aria-label="Use a reset ticket for ${esc(a.email || 'this account')}"` : 'span'} ${tipAttr(`<b>${allowance.remaining_count} reported Claude resets remaining.</b><br>Eligible: ${allowance.eligible ? 'Yes' : 'No'} · Usable now: ${allowance.usable_now ? 'Yes' : 'No'}${allowance.at_limit != null ? ' · At limit: ' + (allowance.at_limit ? 'Yes' : 'No') : ''}<hr>From the cached snapshot.${allowance.remaining_count > 0 ? ' Click to use one.' : ''}`)}>${icon('ticket', 'icon icon--sm')}${allowance.remaining_count}</${allowance.remaining_count > 0 ? 'button' : 'span'}>`
+      : `<span data-tip="Claude reset allowance unknown in this snapshot.">${icon('ticket', 'icon icon--sm')}–</span>`;
+  } else {
+    resetFact = credits
+      ? `<${credits.available_count > 0 ? `button class="ticket" data-ticket="${esc(a.auth_index)}" aria-label="Use a reset ticket for ${esc(a.email || 'this account')}"` : 'span'} ${tipAttr(`<b>${esc(credits.available_count)} reset tickets available.</b><br>Applicable now: ${esc(credits.applicable_available_count ?? 'unknown')}.${a.q?.extras?.credits?.balance ? `<br>Credit balance: ${esc(Number(a.q.extras.credits.balance).toLocaleString(undefined, { maximumFractionDigits: 0 }))}` : ''}${credits.available_count > 0 ? '<hr>Click to use one.' : ''}`)}>${icon('ticket', 'icon icon--sm')}${esc(credits.available_count)}</${credits.available_count > 0 ? 'button' : 'span'}>`
+      : `<span data-tip="Reset-ticket count unavailable from the quota response.">${icon('ticket', 'icon icon--sm')}–</span>`;
+  }
+  const actTip = act ? `<b>${act.completed_in_current_window} completed</b> in the current 10-minute window<br>Lifetime attempts: ${full(act.success)} successful · ${full(act.failed)} failed<hr>Completed requests, not in-flight.` : 'Completed activity unavailable';
+
+  const tokens24 = a.u?.total || 0, tokens7 = a.w?.total || 0;
+  const spark = (a.u?.series || []).map((p) => p.total || 0);
+  const saving = state.savingPriority === a.provider;
+  const conflict = pref?.status === 'conflict';
+  const prioTip = preferred
+    ? 'Preferred account. If exhausted, unavailable, or unsupported for the model, fall back using automatic reset order.<hr>Applies to new bindings and genuine failover; existing sticky sessions keep their account.'
+    : conflict ? 'More than one native priority is present. Mark one account or unmark to return to automatic order.'
+    : 'Prefer this account when it is eligible; selecting it replaces the other priority account for this provider.<hr>Applies to new bindings and genuine failover; existing sticky sessions keep their account.';
+
+  const live = liveOf(a.auth_index);
+  return `<article class="acct${live?.in_flight ? ' acct--live' : ''}" data-index="${esc(a.auth_index)}">
+    <span class="swatch" style="background:${colors[a.auth_index]}" aria-hidden="true"></span>
+    <div class="who">
+      <span class="email" ${state.privacy ? '' : `title="${esc(a.email || '')}"`}>${emailHTML(a.auth_index, 'Account ' + a.auth_index.slice(0, 6))}</span>
+      <span class="meta"><span data-live="${esc(a.auth_index)}" style="display:contents">${liveChip(a.auth_index)}</span>${statusChip}${prioChip}${staleChip}${plan ? `<span class="chip">${esc(plan)}</span>` : ''}<span ${tipAttr(metaTip)}>${updated ? 'checked ' + esc(ago(updated)) : 'not checked'}</span></span>
+    </div>
+    <div class="windows">${quotaCell(weekly, '7d', '7-day limit')}${quotaCell(five, '5h', '5-hour limit')}${scoped ? quotaCell(scoped, modelLabel(scoped), '7-day ' + modelLabel(scoped) + ' limit') : '<div class="win win--empty"></div>'}</div>
+    <div class="use" ${tipAttr(`<b>${full(tokens24)}</b> tokens in 24h · <b>${full(tokens7)}</b> in 7 days${a.u ? `<br>${full(a.u.requests)} requests · ${full(a.u.sessions)} sessions${a.u.latency_p50_ms ? ' · p50 ' + ms(a.u.latency_p50_ms) : ''}${a.u.tps_p50 ? ' · ' + tps(a.u.tps_p50) + ' tok/s' : ''}` : ''}${lastUsed(a) ? '<br>Last request ' + esc(stamp(lastUsed(a))) : ''}`)}>
+      <span class="big">${compact(tokens24)}${sparkline(spark, colors[a.auth_index], 56, 18)}</span>
+      <span class="sub">${compact(tokens7)} wk${lastUsed(a) ? ' · ' + esc(ago(lastUsed(a))) : ''}</span></div>
+    <div class="facts-col" style="display:grid;gap:0.35rem;justify-items:end">
+      <button class="prio" data-prio="${esc(a.auth_index)}" aria-pressed="${preferred}" ${saving || !pref ? 'disabled' : ''} ${tipAttr(esc(prioTip))}
+        aria-label="${preferred ? 'Unmark priority for ' : 'Mark as priority: '}${esc(a.email || 'this account')}">${saving ? `<svg class="icon icon--sm spin"><use href="#i-refresh"/></svg>` : icon('star', 'icon icon--sm')}${preferred ? 'Priority' : conflict ? 'Conflict' : 'Priority'}</button>
+      <div class="facts"><span ${tipAttr(actTip)}>${icon('bolt', 'icon icon--sm')}${reqs10 ?? '–'}</span>${resetFact}</div>
+    </div>
+    <button class="btn btn--icon btn--ghost" data-actions="${esc(a.auth_index)}" aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${esc(a.email || 'account')}">${icon('dots')}</button>
+  </article>`;
+}
+
+const tps = (v) => (v == null ? '—' : v >= 100 ? Math.round(v) + '' : v.toFixed(1));
+const liveOf = (index) => state.liveView?.accounts?.[index] || null;
+function lastUsed(a) {
+  const live = liveOf(a.auth_index);
+  const seen = Math.max((live?.last_finished_at || 0), (live?.last_started_at || 0), (a.u?.last_used || 0), (a.w?.last_used || 0));
+  return seen ? seen * 1000 : null;
+}
+function liveChip(index) {
+  const live = liveOf(index);
+  if (!live) return '';
+  const sessions = live.sessions ? `${live.sessions} sticky session${live.sessions > 1 ? 's' : ''} in the last 30 min. New requests in those sessions stay on this account.` : 'No sticky sessions in the last 30 min.';
+  if (live.in_flight) {
+    const rows = live.requests.map((r) => `<div class="row"><span>${esc(r.model)}${r.fallback ? ' · failover' : r.new_binding ? ' · new session' : ''}</span><span>${duration(r.running_seconds * 1000).replace(/^0m$/, '<1m')}</span></div>`).join('');
+    return `<span class="chip chip--live" ${tipAttr(`<b>${live.in_flight} request${live.in_flight > 1 ? 's' : ''} running on this account</b><hr>${rows}<hr>${esc(sessions)}`)}><span class="dot dot--ok dot--live"></span>Serving ${live.in_flight}</span>`;
+  }
+  return live.sessions ? `<span class="chip" data-tip="${esc(sessions)}">${live.sessions} session${live.sessions > 1 ? 's' : ''}</span>` : '';
+}
+function updateLive() {
+  // Patch only the live bits so tooltips, menus and focus survive the 3 s refresh.
+  document.querySelectorAll('[data-live]').forEach((el) => { el.innerHTML = liveChip(el.dataset.live); });
+  document.querySelectorAll('.acct[data-index]').forEach((row) => row.classList.toggle('acct--live', (liveOf(row.dataset.index)?.in_flight || 0) > 0));
+  const tile = $('#live-tile');
+  if (tile) tile.innerHTML = liveTile();
+}
+function liveTile() {
+  const view = state.liveView;
+  if (!view) return `<div class="label">Serving now</div><div class="value">${skel(40)}</div><div class="foot">&nbsp;</div>`;
+  if (!view.available) return `<div class="label">Serving now</div><div class="value">—</div><div class="foot">Proxy log not connected</div>`;
+  const busy = Object.entries(view.accounts).filter(([, v]) => v.in_flight).sort((a, b) => b[1].in_flight - a[1].in_flight);
+  const total = busy.reduce((n, [, v]) => n + v.in_flight, 0);
+  const names = busy.map(([k, v]) => `${shortName(k)} ${v.in_flight}`).join(' · ');
+  return `<div class="label">Serving now</div>
+    <div class="value">${total}${total ? '<span class="dot dot--ok dot--live" style="margin-left:0.2rem"></span>' : ''}<small>request${total === 1 ? '' : 's'}</small></div>
+    <div class="foot" ${names ? `data-tip="${esc(names)}"` : ''}>${total ? esc(names) : 'Idle'}</div>`;
+}
+
+function quotaCell(w, label, aria) {
+  if (!w) return `<div class="win win--empty"><div class="win-top">${esc(label)} <b class="muted">—</b></div><div class="meter"></div><div class="win-foot">No window reported</div></div>`;
+  const r = remaining(w), t = tone(r);
+  const reset = parseTime(w.reset_at);
+  const foot = !reset ? 'Reset time unknown' : reset <= state.now ? 'Reset passed · awaiting check' : 'Resets in ' + duration(reset - state.now);
+  const flag = t === 'alarm' ? '<span class="flag tone-alarm">Very low</span>' : t === 'warn' ? '<span class="flag tone-warn">Low</span>' : '';
+  return `<div class="win" ${reset ? `data-tip="${esc(aria)} resets ${esc(stamp(reset))}"` : ''}>
+    <div class="win-top">${esc(label)} <b>${r == null ? '—' : pct(r)}</b><span>left</span>${flag}</div>
+    <div class="meter" role="progressbar" aria-label="${esc(aria)} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${r ?? ''}"><i class="${t}" style="transform:scaleX(${(r ?? 0) / 100})"></i></div>
+    <div class="win-foot">${esc(foot)}</div></div>`;
+}
+
+function tokenBreakdown(t) {
+  if (!t) return '';
+  return `Input ${compact(t.input)} · Cache read ${compact(t.cache_read)} · Cache write ${compact(t.cache_write)} · Output ${compact(t.output)}${t.reasoning ? ` (reasoning ${compact(t.reasoning)})` : ''}`;
+}
+function deltaChip(now, before) {
+  if (!now || !before) return '';
+  const d = ((now - before) / before) * 100;
+  if (Math.abs(d) < 1) return '';
+  return `<span class="delta ${d > 0 ? 'delta--up' : 'delta--down'}" data-tip="vs the previous period (${compact(before)})">${d > 0 ? '+' : ''}${Math.round(d)}%</span>`;
+}
+function legend(keys, colors) {
+  if (keys.length < 2) return '';
+  return `<div class="legend">${keys.map((k) => `<span><i style="background:${colors[k]}"></i>${esc(shortName(k))}</span>`).join('')}</div>`;
+}
+function rankList(items) {
+  if (!items.length) return '<p class="muted" style="margin:0;font-size:0.8125rem">Nothing recorded yet.</p>';
+  const max = Math.max(...items.map((i) => i.value || 0), 1);
+  return `<ul class="rank">${items.map((i) => `<li ${i.sub ? `data-tip="${esc(i.sub)}"` : ''}><span class="name">${esc(i.name)}</span><span class="num">${compact(i.value)}</span><span class="bar"><i style="transform:scaleX(${(i.value || 0) / max})"></i></span></li>`).join('')}</ul>`;
+}
+const skel = (w) => `<span class="skel" style="display:inline-block;width:${w}px;height:24px"></span>`;
+const skelBlock = (h) => `<div class="skel" style="height:${h}px"></div>`;
+const skelRows = () => `<div style="display:grid;gap:0.6rem">${skelBlock(18)}${skelBlock(18)}</div>`;
+
+/* ------------------------------------------------------------------- usage */
+function usagePage() {
+  const r = state.usageRange, u = state.usage[r], colors = slots();
+  const metric = state.usageMetric;
+  const keys = (u?.accounts || []).map((a) => a.auth_index);
+  const buckets = (u?.series || []).map((_, i) => Object.fromEntries((u.accounts || []).map((a) => [a.auth_index, a.series[i]])));
+  const t = u?.totals, p = u?.previous;
+  const cacheHit = t ? t.cache_read / Math.max(1, t.input + t.cache_read + t.cache_write) * 100 : null;
+  const rangeName = { '24h': '24 hours', '7d': '7 days', '30d': '30 days', '90d': '90 days' }[r];
+  const hist = state.history[state.historyRange];
+  const histSeries = (hist?.windows || []).filter((w) => w.kind === 'weekly' && !w.model).map((w) => ({ auth_index: w.auth_index, points: w.points }));
+
+  return `<div class="page">
+    <div class="page-head"><h1>Usage</h1>
+      <div class="seg" role="group" aria-label="Range">${['24h', '7d', '30d', '90d'].map((k) => `<button data-range="${k}" aria-pressed="${r === k}">${k}</button>`).join('')}</div>
+    </div>
+    <section class="tiles">
+      <div class="tile" ${tipAttr(tokenBreakdown(t))}><div class="label">Tokens</div><div class="value">${t ? compact(t.total) : skel(64)}${deltaChip(t?.total, p?.total)}</div><div class="foot">${t ? `${compact(t.output)} output` : '&nbsp;'}</div></div>
+      <div class="tile"><div class="label">Requests</div><div class="value">${t ? full(t.requests) : skel(48)}${deltaChip(t?.requests, p?.requests)}</div><div class="foot">${t ? `${compact(t.total / Math.max(1, t.requests))} tokens each` : '&nbsp;'}</div></div>
+      <div class="tile" data-tip="Median output tokens per second after the first token, over ${esc(full(u?.tps_samples))} streamed responses with at least 16 output tokens."><div class="label">Output speed</div><div class="value">${u ? tps(u.tps_p50) + '<small>tok/s</small>' : skel(48)}</div><div class="foot">median, after first token</div></div>
+      <div class="tile"><div class="label">Sessions</div><div class="value">${t ? full(t.sessions) : skel(40)}</div><div class="foot">distinct client sessions</div></div>
+      <div class="tile" data-tip="Share of input tokens served from the provider's prompt cache"><div class="label">Cache hit</div><div class="value">${t ? pct(cacheHit) : skel(40)}</div><div class="foot">${t ? `${compact(t.cache_write)} written to cache` : '&nbsp;'}</div></div>
+      <div class="tile"><div class="label">Failures</div><div class="value ${t?.failed ? 'tone-alarm' : ''}">${t ? full(t.failed) : skel(32)}</div><div class="foot">${t ? (t.failed ? pct(t.failed / Math.max(1, t.requests) * 100, 1) + ' of requests' : 'none') : '&nbsp;'}</div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><span class="label">${metric === 'requests' ? 'Requests' : 'Tokens'} by account · ${rangeName}</span>
+        <div class="seg" role="group" aria-label="Metric">${[['total', 'Tokens'], ['output', 'Output'], ['requests', 'Requests']].map(([k, n]) => `<button data-metric="${k}" aria-pressed="${metric === k}">${n}</button>`).join('')}</div></div>
+      <div class="panel-body">${u ? stackedBars({ buckets, start: u.start, size: u.bucket_seconds, keys, colors, metric, names: nameOf, height: 240 }) + legend(keys, colors) : skelBlock(240)}</div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><span class="label">Accounts · ${rangeName}</span></div>
+      <div class="panel-body scroll-x">${u ? accountTable(u, colors) : skelBlock(160)}</div>
+    </section>
+    <div class="grid-3">
+      <section class="panel"><div class="panel-head"><span class="label">Models</span></div><div class="panel-body">${u ? rankList(u.models.map((m) => ({ name: m.model, value: m.total, sub: `${provName(m.provider)} · ${full(m.requests)} req · ${compact(m.output)} output${m.tps_p50 ? ' · ' + tps(m.tps_p50) + ' tok/s' : ''}` }))) : skelBlock(120)}</div></section>
+      <section class="panel"><div class="panel-head"><span class="label">Clients</span></div><div class="panel-body">${u ? rankList(u.clients.map((c) => ({ name: c.client, value: c.total, sub: `${full(c.requests)} req · ${full(c.sessions)} sessions` }))) : skelBlock(120)}</div></section>
+      <section class="panel"><div class="panel-head"><span class="label">Failures</span><a class="btn btn--sm btn--ghost" href="#/requests?failed=1">Inspect →</a></div><div class="panel-body">${u ? (u.failures.length ? rankList(u.failures.map((f) => ({ name: statusName(f.status), value: f.requests, sub: `${full(f.requests)} requests` }))) : '<p class="muted" style="margin:0;font-size:0.8125rem">No failed requests in this range.</p>') : skelBlock(120)}</div></section>
+    </div>
+    <section class="panel">
+      <div class="panel-head"><span class="label">Weekly quota used</span>
+        <span class="info-dot" data-tip="Provider-reported weekly usage per account, sampled at each quota check. Falls mark weekly resets.">${icon('info', 'icon icon--sm')}</span>
+        <div class="seg" role="group" aria-label="Quota history range">${['7d', '30d', '90d'].map((k) => `<button data-history="${k}" aria-pressed="${state.historyRange === k}">${k}</button>`).join('')}</div></div>
+      <div class="panel-body">${hist ? lineChart({ series: histSeries, start: hist.start, end: Date.now() / 1000, colors, height: 230 }) + legend([...new Set(histSeries.map((s) => s.auth_index))], colors) : skelBlock(230)}</div>
+    </section>
+  </div>`;
+}
+function statusName(s) {
+  const names = { 400: 'Bad request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 408: 'Timeout', 413: 'Too large', 429: 'Rate limited', 499: 'Client closed', 500: 'Server error', 502: 'Bad gateway', 503: 'Unavailable', 504: 'Gateway timeout', 529: 'Overloaded' };
+  return `${s ?? '—'} ${names[s] || ''}`.trim();
+}
+function accountTable(u, colors) {
+  if (!u.accounts.length) return '<p class="muted" style="margin:0;font-size:0.8125rem">No traffic in this range.</p>';
+  const total = Math.max(1, u.totals.total);
+  return `<table class="data"><thead><tr><th>Account</th><th>Share</th><th>Total</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Requests</th><th>Failed</th><th data-tip="Median output tokens per second after the first token">tok/s</th><th>p50</th><th>p95</th><th>TTFT</th><th>Last used</th></tr></thead><tbody>
+    ${u.accounts.map((a) => `<tr>
+      <td><span class="who-cell"><span class="swatch" style="background:${colors[a.auth_index]}"></span>${provIcon(a.provider)}<span>${emailHTML(a.auth_index, nameOf(a.auth_index), 'table')}</span>${labels()[a.auth_index]?.removed_at ? '<span class="chip">removed</span>' : ''}</span></td>
+      <td><span class="share"><i style="width:${(a.total / total) * 100}%;background:${colors[a.auth_index]}"></i></span>${pct(a.total / total * 100)}</td>
+      <td data-tip="${esc(full(a.total))}"><b>${compact(a.total)}</b></td><td>${compact(a.input)}</td><td>${compact(a.cache_read)}</td><td>${compact(a.cache_write)}</td>
+      <td ${a.reasoning ? `data-tip="${esc(compact(a.reasoning))} reasoning"` : ''}>${compact(a.output)}</td>
+      <td>${full(a.requests)}</td><td class="${a.failed ? 'tone-alarm' : 'muted'}">${full(a.failed)}</td>
+      <td ${a.tps_p90 ? `data-tip="p90 ${esc(tps(a.tps_p90))} tok/s"` : ''}><b>${tps(a.tps_p50)}</b></td><td>${ms(a.latency_p50_ms)}</td><td>${ms(a.latency_p95_ms)}</td><td>${ms(a.ttft_p50_ms)}</td><td class="muted" data-tip="${esc(stamp(a.last_used * 1000))}">${esc(ago(a.last_used * 1000))}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+/* ---------------------------------------------------------------- requests */
+function requestsPage() {
+  const colors = slots(), data = state.requests, f = state.reqFilter, all = labels();
+  const models = [...new Set([...(state.usage['30d']?.models || state.usage[state.usageRange]?.models || []).map((m) => m.model), f.model].filter(Boolean))];
+  return `<div class="page">
+    <div class="page-head"><h1>Requests</h1>
+      <div class="filters">
+        <select class="sel" id="rf-account" aria-label="Account"><option value="">All accounts</option>${Object.values(all).map((a) => `<option value="${esc(a.auth_index)}" ${f.account === a.auth_index ? 'selected' : ''}>${esc(state.privacy ? aliasOf(a.auth_index) + ' · ' + maskText(a.email) : (a.email || a.auth_index) + ' · ' + provName(a.provider))}${a.removed_at ? ' (removed)' : ''}</option>`).join('')}</select>
+        <select class="sel" id="rf-model" aria-label="Model"><option value="">All models</option>${models.map((m) => `<option ${f.model === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
+        <label class="toggle"><input type="checkbox" id="rf-failed" ${f.failed === '1' ? 'checked' : ''}><span>Failed only</span></label>
+      </div>
+    </div>
+    <section class="panel"><div class="panel-body scroll-x" style="padding-top:0.6rem">
+      ${!data ? skelBlock(260) : !data.requests.length ? '<p class="muted" style="margin:0.4rem 0;font-size:0.8125rem">No requests match. The ledger records every completed request from the moment tracking started.</p>' : `
+      <table class="data"><thead><tr><th>Time</th><th class="left">Account</th><th class="left">Client</th><th class="left">Model</th><th>Input</th><th>Cache</th><th>Output</th><th>Total</th><th data-tip="Output tokens per second after the first token">tok/s</th><th>Latency</th><th>TTFT</th><th>Status</th></tr></thead><tbody>
+      ${data.requests.map((q) => `<tr>
+        <td class="muted" data-tip="${esc(new Date(q.ts * 1000).toLocaleString())}">${esc(clock(q.ts * 1000))}</td>
+        <td class="left"><span class="who-cell"><span class="swatch" style="background:${colors[q.auth_index]}"></span><span>${esc(shortName(q.auth_index))}</span></span></td>
+        <td class="left">${esc(q.client)}</td>
+        <td class="left" ${q.response_model && q.response_model !== q.model ? `data-tip="Served as ${esc(q.response_model)}"` : ''}>${esc(q.model)}${q.reasoning_effort ? ` <span class="muted">${esc(q.reasoning_effort)}</span>` : ''}</td>
+        <td>${compact(q.input)}</td><td ${tipAttr(`Read ${full(q.cache_read)} · Write ${full(q.cache_write)}`)}>${compact(q.cache_read + q.cache_write)}</td>
+        <td ${q.reasoning ? `data-tip="${esc(full(q.reasoning))} reasoning"` : ''}>${compact(q.output)}</td><td><b>${compact(q.total)}</b></td>
+        <td class="${q.tps == null ? 'muted' : ''}">${tps(q.tps)}</td>
+        <td>${ms(q.latency_ms)}</td><td>${ms(q.ttft_ms)}</td>
+        <td>${q.failed ? `<span class="status-pill tone-alarm" data-tip="${esc(statusName(q.status))}"><span class="dot dot--alarm"></span>${esc(q.status ?? 'fail')}</span>` : '<span class="status-pill muted"><span class="dot dot--ok"></span>ok</span>'}</td></tr>`).join('')}
+      </tbody></table>
+      ${data.next_before ? '<div style="display:flex;justify-content:center;padding:0.8rem 0 0.2rem"><button class="btn" id="more">Load older</button></div>' : ''}`}
+    </div></section>
+  </div>`;
+}
+
+/* ------------------------------------------------------------------ render */
+function render() {
+  if (menuFor || document.querySelector('dialog[open]')) { state.dirty = true; return; }
+  state.dirty = false;
+  state.now = Date.now();
+  const focused = document.activeElement?.id;
+  const caret = focused === 'filter' ? document.activeElement.selectionStart : null;
+  pendingCharts.length = 0;
+  const page = { overview: overviewPage, usage: usagePage, requests: requestsPage }[state.route]();
+  if (tipFor) { tipFor = null; tip.dataset.state = 'closed'; tip.hidden = true; tipWarm = false; }
+  $('#main').innerHTML = page;
+  drawCharts();
+  document.querySelectorAll('.rail a').forEach((a) => a.toggleAttribute('aria-current', false));
+  document.querySelector(`.rail a[data-route="${state.route}"]`)?.setAttribute('aria-current', 'page');
+  const list = accounts();
+  $('#n-claude').textContent = state.credentials ? list.filter((a) => a.provider === 'claude').length : '–';
+  $('#n-codex').textContent = state.credentials ? list.filter((a) => a.provider === 'codex').length : '–';
+  if (focused) { const el = document.getElementById(focused); if (el) { el.focus(); if (caret != null) el.setSelectionRange(caret, caret); } }
+  renderPulse();
+}
+function renderPulse() {
+  const s = state.status;
+  const ledgerOk = s && !s.last_error && s.last_poll_at && Date.now() / 1000 - s.last_poll_at < 60;
+  const dot = $('#pulse-dot'), text = $('#pulse-text');
+  dot.className = 'dot ' + (state.proxyOk === false ? 'dot--alarm' : ledgerOk ? 'dot--ok' + (state.live ? ' dot--live' : '') : s ? 'dot--warn' : '');
+  // Healthy state is the dot alone; words appear only when something needs attention.
+  text.textContent = state.proxyOk === false ? 'Proxy unreachable' : !s ? 'Connecting' : ledgerOk ? '' : 'Ledger stalled';
+  text.hidden = !text.textContent;
+  $('#pulse').dataset.tip = s ? `Token ledger: ${full(s.stored_requests)} requests stored since ${new Date(s.tracking_since * 1000).toLocaleDateString()}. Last poll ${ago(s.last_poll_at * 1000)}.${s.last_error ? ' Last error: ' + s.last_error : ''}` : '';
+  $('#foot-proxy').className = 'dot ' + (state.proxyOk ? 'dot--ok' : state.proxyOk === false ? 'dot--alarm' : '');
+  $('#foot-proxy-text').textContent = state.proxyOk === false ? 'Proxy unreachable' : 'Proxy connected';
+  $('#foot-ledger').className = 'dot ' + (ledgerOk ? 'dot--ok' : s ? 'dot--warn' : '');
+  $('#foot-ledger-text').textContent = s ? `Ledger · ${compact(s.stored_requests)} req` : 'Token ledger';
+}
+
+/* ------------------------------------------------------------------- loads */
+async function loadAccounts() {
+  try {
+    const [cred, quota] = await Promise.all([api('/credentials'), api('/dashboard/quota')]);
+    state.credentials = cred; state.quota = quota; state.proxyOk = true;
+  } catch (e) { state.proxyOk = false; if (!state.credentials) toast('Accounts could not be loaded. Check the proxy and retry.', 'alarm'); }
+}
+async function loadUsage(range) {
+  try { state.usage[range] = await api(`/dashboard/usage?range=${range}&tz=${TZ}`); if (range === '24h') state.usage24 = state.usage[range]; }
+  catch { /* keep the last good view */ }
+}
+async function loadLive() { try { state.liveView = await api('/dashboard/live'); } catch { /* keep the last view */ } }
+async function loadStatus() { try { state.status = await api('/dashboard/status'); } catch { state.status = null; } }
+async function loadHistory(range) { try { state.history[range] = await api(`/dashboard/quota-history?range=${range}`); } catch { /* keep */ } }
+async function loadRequests(append = false) {
+  const f = state.reqFilter, q = new URLSearchParams({ limit: '100' });
+  if (f.account) q.set('account', f.account);
+  if (f.model) q.set('model', f.model);
+  if (f.failed) q.set('failed', f.failed);
+  if (append && state.requests?.next_before) q.set('before', state.requests.next_before);
+  try {
+    const page = await api('/dashboard/requests?' + q);
+    state.requests = append ? { ...page, requests: [...state.requests.requests, ...page.requests] } : page;
+  } catch { if (!append) state.requests = { requests: [], next_before: null }; }
+}
+async function refresh({ quiet = false } = {}) {
+  const btn = $('#refresh svg');
+  if (!quiet) btn.classList.add('spin');
+  const jobs = [loadAccounts(), loadStatus(), loadLive(), loadUsage('24h'), loadUsage('7d')];
+  if (state.route === 'usage') jobs.push(loadUsage(state.usageRange), loadHistory(state.historyRange));
+  if (state.route === 'requests') jobs.push(loadRequests(), loadUsage('30d'));
+  await Promise.all(jobs);
+  btn.classList.remove('spin');
+  render();
+}
+
+/* ----------------------------------------------------------------- actions */
+async function setPriority(index) {
+  const a = accounts().find((x) => x.auth_index === index);
+  const pref = a?.routing_preference;
+  if (!a || !pref) return;
+  const unmark = pref.preferred_auth_index === index;
+  state.savingPriority = a.provider; render();
+  try {
+    state.credentials = await api('/account-preference', { method: 'POST', body: { provider: a.provider, authIndex: unmark ? null : index, expectedRevision: pref.revision } });
+    toast(unmark ? `${provName(a.provider)} back to automatic order.` : `${displayName(a)} is now the ${provName(a.provider)} priority.`);
+  } catch (e) {
+    toast(PREFERENCE_ERRORS[e.code] || 'Could not confirm the priority change. Refresh before retrying.', 'alarm');
+    await loadAccounts();
+  } finally { state.savingPriority = null; render(); }
+}
+
+async function checkUsage(index) {
+  const a = accounts().find((x) => x.auth_index === index);
+  if (!a) return;
+  const headers = { Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json' };
+  let url;
+  if (a.provider === 'claude') {
+    url = 'https://api.anthropic.com/api/oauth/usage';
+    Object.assign(headers, { 'User-Agent': 'claude-cli/2.1.287 (external, cli)', 'anthropic-beta': 'oauth-2025-04-20' });
+  } else {
+    url = 'https://chatgpt.com/backend-api/wham/usage';
+    headers['User-Agent'] = 'codex-cli/0.159.2';
+    if (a.chatgpt_account_id) headers['Chatgpt-Account-Id'] = a.chatgpt_account_id;
+  }
+  try {
+    const reply = await api('/requests/api-call', { method: 'POST', body: { authIndex: index, method: 'GET', url, header: headers } });
+    const c = reply.quota_cache || {};
+    const wait = c.retry_after_seconds;
+    if (c.error_status) toast(`Provider check failed (HTTP ${c.error_status}). Showing the last confirmed snapshot; next try ${clock(parseTime(c.next_check_at))}.`, 'warn');
+    else if (wait > 30 && parseTime(c.observed_at) < Date.now() - 20000) toast(`Using the shared snapshot from ${ago(parseTime(c.observed_at))}. Next provider check in ${duration(wait * 1000)}.`, 'ok');
+    else toast(`Usage checked for ${displayName(a)}.`);
+  } catch { toast('Usage could not be checked. Retry when the provider is available.', 'alarm'); }
+  await loadAccounts(); render();
+}
+
+let removing = null;
+function askRemove(index) {
+  const a = accounts().find((x) => x.auth_index === index);
+  if (!a) return;
+  removing = a;
+  $('#remove-who').innerHTML = emailHTML(a.auth_index, 'this account', 'dialog');
+  $('#remove-error').hidden = true;
+  $('#remove-confirm').disabled = false;
+  $('#dlg-remove').showModal();
+}
+$('#remove-confirm').addEventListener('click', async () => {
+  const btn = $('#remove-confirm');
+  btn.disabled = true;
+  try {
+    await api('/credentials?name=' + encodeURIComponent(removing.name), { method: 'DELETE' });
+    $('#dlg-remove').close();
+    toast(`${displayName(removing)} removed from the proxy.`);
+    await loadAccounts(); render();
+  } catch {
+    $('#remove-error').textContent = 'The connection could not be removed. Check the proxy and retry.';
+    $('#remove-error').hidden = false; btn.disabled = false;
+  }
+});
+
+/* ------------------------------------------------------------ reset tickets */
+const RESET_ERRORS = {
+  not_limited: 'Not used. Claude only applies a reset once the account has hit its limit.',
+  not_usable_now: 'Not used. Claude reports the ticket can\'t be used right now.',
+  not_applicable: 'Not used. OpenAI reports no ticket applies to this account right now.',
+  no_ticket: 'Not used. The provider reports no tickets left.',
+  ineligible: 'Not used. The provider says this account is not eligible for resets.',
+  paused: 'Not used. The provider has paused this account\'s tickets.',
+  recently_used: 'A ticket was just used on this account. Wait two minutes before trying again.',
+  in_progress: 'A reset for this account is already in progress.',
+  rate_limited: 'The provider rate-limited the request. Nothing was spent; try again later.',
+  provider_refused: 'The provider refused the request. Check usage before trying again.',
+  status_unavailable: 'Could not read the account\'s current tickets from the provider. Nothing was spent.',
+  organization_unavailable: 'Could not read the Claude organization for this account. Nothing was spent.',
+  provider_unreachable: 'The provider could not be reached. Nothing was spent.',
+  account_unavailable: 'This account is no longer on the proxy.',
+};
+const CLAUDE_OUTCOMES = {
+  already_used: 'The provider says this ticket was already used.', not_limited: 'The provider says the account is not limited, so nothing was reset.',
+  cooldown: 'The provider says resets are cooling down for this account.', ineligible: 'The provider says this account is not eligible.',
+  unavailable: 'The provider says resets are unavailable right now.',
+};
+function ticketCount(a) {
+  if (!a) return 0;
+  return a.provider === 'claude' ? (a.q?.extras?.claude_reset_allowance?.remaining_count || 0) : (a.q?.extras?.reset_credits?.available_count || 0);
+}
+let resetting = null;
+function askReset(index) {
+  const a = accounts().find((x) => x.auth_index === index);
+  if (!a || ticketCount(a) < 1) return;
+  resetting = a;
+  const allowance = a.q?.extras?.claude_reset_allowance, credits = a.q?.extras?.reset_credits;
+  const usable = a.provider === 'claude' ? allowance?.usable_now === true : (credits?.applicable_available_count || 0) > 0;
+  const { weekly, five } = windowsOf(a);
+  $('#reset-icon use').setAttribute('href', '#i-' + a.provider);
+  $('#reset-facts').innerHTML = `<dt>Account</dt><dd>${emailHTML(a.auth_index, 'this account', 'dialog')} · ${provName(a.provider)}</dd>
+    <dt>Tickets</dt><dd>${ticketCount(a)} left</dd>
+    <dt>Weekly left</dt><dd>${pct(remaining(weekly))}${five ? ` · 5h ${pct(remaining(five))}` : ''}</dd>
+    <dt>Usable now</dt><dd>${usable ? 'Yes' : 'No'} <span class="muted" style="font-weight:400">as of ${esc(ago(parseTime(a.q?.cache?.observed_at)))}</span></dd>`;
+  const note = $('#reset-note');
+  note.hidden = usable;
+  note.className = 'note';
+  note.textContent = usable ? '' : (a.provider === 'claude'
+    ? 'The last check says this ticket only applies once the account hits its limit. The proxy will check again and stop without spending if that is still true.'
+    : 'The last check says no ticket applies right now. The proxy will check again and stop without spending if that is still true.');
+  $('#reset-label').textContent = 'Hold to use 1 ticket';
+  $('#reset-confirm').disabled = false;
+  $('#dlg-reset').showModal();
+}
+async function useReset() {
+  const a = resetting, btn = $('#reset-confirm');
+  btn.disabled = true; delete btn.dataset.holding;
+  $('#reset-label').textContent = 'Checking with provider…';
+  try {
+    const r = await api('/reset-ticket', { method: 'POST', body: { provider: a.provider, authIndex: a.auth_index } });
+    $('#dlg-reset').close();
+    if (r.spent) toast(`Reset used on ${displayName(a)}.${r.resets_left != null ? ` ${r.resets_left} left.` : ''} Quota refreshes in a few seconds.`);
+    else toast(`${CLAUDE_OUTCOMES[r.result] || 'The provider did not reset this account.'} No ticket was spent.`, 'warn');
+    setTimeout(() => loadAccounts().then(render), 7000);
+  } catch (e) {
+    const note = $('#reset-note');
+    note.hidden = false; note.className = 'note note--alarm';
+    note.textContent = RESET_ERRORS[e.code] || 'The reset could not be confirmed. Check usage before trying again.';
+    $('#reset-label').textContent = 'Hold to use 1 ticket';
+    btn.disabled = ['recently_used', 'in_progress', 'no_ticket', 'account_unavailable'].includes(e.code);
+  }
+}
+{
+  // Hold-to-confirm: 1.2 s press (pointer, Space or Enter). Releasing early cancels.
+  const btn = $('#reset-confirm');
+  let timer = null;
+  const start = (e) => {
+    if (btn.disabled || timer) return;
+    if (e.type === 'keydown' && e.key !== ' ' && e.key !== 'Enter') return;
+    if (e.type === 'keydown') e.preventDefault();
+    btn.dataset.holding = '';
+    timer = setTimeout(() => { timer = null; useReset(); }, 1200);
+  };
+  const stop = () => { if (!timer) return; clearTimeout(timer); timer = null; delete btn.dataset.holding; };
+  btn.addEventListener('pointerdown', start);
+  btn.addEventListener('keydown', start);
+  ['pointerup', 'pointerleave', 'pointercancel', 'keyup', 'blur'].forEach((ev) => btn.addEventListener(ev, stop));
+  btn.addEventListener('click', (e) => e.preventDefault());
+}
+
+/* -------------------------------------------------------------- add account */
+const add = { provider: null, state: null, phase: 'idle', poll: null, opened: false };
+const dlgAdd = $('#dlg-add');
+function addStatus(text, toneName = '') {
+  const el = $('#add-status');
+  el.hidden = !text; el.className = 'note' + (toneName ? ' note--' + toneName : ''); el.textContent = text || '';
+}
+async function startAdd(provider) {
+  Object.assign(add, { provider, state: null, phase: 'starting', opened: false });
+  $('#add-title').textContent = `Add a ${provName(provider)} account`;
+  $('#add-icon use').setAttribute('href', '#i-' + provider);
+  const link = $('#add-open');
+  link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); link.querySelector('span').textContent = 'Preparing sign-in…';
+  $('#add-callback').value = ''; $('#add-submit').disabled = true; $('#add-submit').textContent = 'Connect account';
+  ['step-open', 'step-approve', 'step-paste'].forEach((id) => $('#' + id).removeAttribute('data-done'));
+  addStatus('');
+  dlgAdd.showModal();
+  try {
+    const r = await api('/oauth/auth-url?provider=' + provider);
+    if (!r.url || !r.state) throw new Error('no url');
+    add.state = r.state; add.phase = 'waiting';
+    link.href = r.url; link.removeAttribute('aria-disabled'); link.querySelector('span').textContent = `Open ${provName(provider)} sign-in`;
+  } catch {
+    add.phase = 'error';
+    addStatus('Sign-in could not be prepared. Close and try again.', 'alarm');
+    link.querySelector('span').textContent = 'Unavailable';
+  }
+}
+$('#add-open').addEventListener('click', (e) => {
+  if (!add.state) { e.preventDefault(); return; }
+  add.opened = true; $('#step-open').dataset.done = ''; $('#step-approve').dataset.done = '';
+  setTimeout(() => $('#add-callback').focus(), 50);
+});
+function callbackValid(value) {
+  try {
+    const u = new URL(value.trim());
+    const port = add.provider === 'claude' ? '54545' : '1455';
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname) && u.port === port && u.searchParams.get('state') === add.state && !!u.searchParams.get('code');
+  } catch { return false; }
+}
+$('#add-callback').addEventListener('input', (e) => {
+  const v = e.target.value;
+  const ok = callbackValid(v);
+  $('#add-submit').disabled = !ok || add.phase !== 'waiting';
+  if (v && !ok) addStatus('Paste the full callback address for this sign-in. Its state and code must match.', '');
+  else addStatus('');
+  if (ok) $('#step-paste').dataset.done = '';
+});
+$('#add-submit').addEventListener('click', async () => {
+  const value = $('#add-callback').value.trim();
+  if (!callbackValid(value)) return;
+  add.phase = 'submitting';
+  $('#add-submit').disabled = true; $('#add-submit').textContent = 'Connecting…';
+  try {
+    await api('/oauth/callback', { method: 'POST', body: { provider: add.provider, redirect_url: value } });
+    $('#add-callback').value = '';
+    addStatus('Callback sent. Waiting for the proxy to confirm the account…');
+    pollAdd();
+  } catch {
+    add.phase = 'waiting';
+    $('#add-submit').disabled = false; $('#add-submit').textContent = 'Connect account';
+    addStatus('The callback could not be submitted. Check it belongs to this sign-in and retry.', 'alarm');
+  }
+});
+function pollAdd() {
+  clearTimeout(add.poll);
+  add.poll = setTimeout(async () => {
+    if (!add.state || !dlgAdd.open) return;
+    try {
+      const r = await api('/oauth/status?state=' + encodeURIComponent(add.state));
+      if (r.status === 'ok') {
+        add.phase = 'done'; add.state = null;
+        addStatus('Account connected.', 'ok');
+        $('#add-submit').textContent = 'Connected';
+        await loadAccounts();
+        setTimeout(() => { if (dlgAdd.open) dlgAdd.close(); render(); toast(`${provName(add.provider)} account connected.`); }, 900);
+        return;
+      }
+      if (r.status === 'error') {
+        add.phase = 'error';
+        addStatus(/expired|unknown/i.test(r.error || '') ? 'This sign-in expired. Close and start a new one.' : 'Sign-in could not finish. Close and start a new one.', 'alarm');
+        $('#add-submit').textContent = 'Connect account';
+        return;
+      }
+      pollAdd();
+    } catch { addStatus('The proxy could not be reached. Cancel this sign-in before starting again.', 'alarm'); }
+  }, 1500);
+}
+async function cancelAdd() {
+  clearTimeout(add.poll);
+  const pending = add.state && add.phase !== 'done';
+  if (pending) {
+    try { await api('/oauth/session?state=' + encodeURIComponent(add.state), { method: 'DELETE' }); }
+    catch { addStatus('Cancellation could not be confirmed. Retry before starting again.', 'alarm'); return; }
+  }
+  add.state = null; add.phase = 'idle';
+  if (dlgAdd.open) dlgAdd.close();
+  if (pending) toast('Sign-in cancelled.', 'warn');
+}
+$('#add-cancel').addEventListener('click', cancelAdd);
+dlgAdd.addEventListener('cancel', (e) => { e.preventDefault(); cancelAdd(); });
+dlgAdd.querySelector('[data-close]').addEventListener('click', cancelAdd);
+document.querySelectorAll('dialog').forEach((d) => {
+  d.addEventListener('close', () => { if (state.dirty) render(); });
+  d.querySelectorAll('[data-close]').forEach((b) => { if (d !== dlgAdd) b.addEventListener('click', () => d.close()); });
+  d.addEventListener('click', (e) => { if (e.target === d && d !== dlgAdd) d.close(); });
+});
+
+/* ------------------------------------------------------------------ privacy */
+function paintMasks() {
+  // Swap text in place: a reveal must not redraw the page under the pointer.
+  document.querySelectorAll('[data-reveal]').forEach((el) => {
+    const key = el.dataset.reveal, shown = state.revealed.has(key), email = labels()[key.split('|')[0]]?.email;
+    el.textContent = shown ? email : maskText(email);
+    el.toggleAttribute('data-shown', shown);
+    el.setAttribute('aria-label', shown ? 'Email shown' : 'Show email');
+  });
+}
+function reveal(index) {
+  state.revealed.add(index);
+  paintMasks();
+}
+function setPrivacy(on) {
+  state.privacy = on;
+  state.revealed.clear();
+  localStorage.setItem('privacy', on ? 'on' : 'off');
+  const btn = $('#privacy');
+  btn.setAttribute('aria-pressed', String(on));
+  btn.setAttribute('aria-label', on ? 'Show emails' : 'Hide emails');
+  btn.dataset.tip = on ? 'Emails hidden. Click one to peek; clicking elsewhere hides it again.' : 'Hide emails, e.g. before a screenshot.';
+  btn.querySelector('use').setAttribute('href', on ? '#i-eye-off' : '#i-eye');
+  render();
+}
+document.addEventListener('pointerdown', (e) => {
+  if (state.revealed.size && !e.target.closest('[data-reveal]')) { state.revealed.clear(); paintMasks(); }
+}, true);
+document.addEventListener('focusout', (e) => {
+  // Keyboard users: tabbing away from a shown email hides it too.
+  if (e.target.closest?.('[data-reveal]') && state.revealed.size) { state.revealed.clear(); paintMasks(); }
+});
+
+/* ------------------------------------------------------------------- events */
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button, a');
+  if (!t) return;
+  if (t.dataset.filterProvider) { state.provider = t.dataset.filterProvider; render(); }
+  else if (t.dataset.provider) { state.provider = t.dataset.provider; if (state.route !== 'overview') location.hash = '#/'; else render(); }
+  else if (t.dataset.add) startAdd(t.dataset.add);
+  else if (t.dataset.reveal) reveal(t.dataset.reveal);
+  else if (t.id === 'privacy') setPrivacy(!state.privacy);
+  else if (t.dataset.prio) setPriority(t.dataset.prio);
+  else if (t.dataset.ticket) askReset(t.dataset.ticket);
+  else if (t.dataset.actions) {
+    if (menuFor === t) { closeMenu(); return; }
+    const index = t.dataset.actions;
+    openMenu(t, [
+      { label: 'Check usage', icon: 'refresh', run: () => checkUsage(index) },
+      { label: 'View requests', icon: 'list', run: () => { state.reqFilter = { account: index, failed: '', model: '' }; state.requests = null; location.hash = '#/requests'; } },
+      { label: 'Use reset ticket…', icon: 'ticket', disabled: ticketCount(accounts().find((x) => x.auth_index === index)) < 1, run: () => askReset(index) },
+      '-',
+      { label: 'Remove from proxy', icon: 'trash', danger: true, run: () => askRemove(index) },
+    ]);
+  }
+  else if (t.dataset.range) { state.usageRange = t.dataset.range; localStorage.setItem('usageRange', state.usageRange); render(); loadUsage(state.usageRange).then(render); }
+  else if (t.dataset.metric) { state.usageMetric = t.dataset.metric; localStorage.setItem('usageMetric', state.usageMetric); render(); }
+  else if (t.dataset.history) { state.historyRange = t.dataset.history; render(); loadHistory(state.historyRange).then(render); }
+  else if (t.id === 'more') { t.disabled = true; loadRequests(true).then(render); }
+  else if (t.id === 'refresh') refresh();
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'filter') { state.filter = e.target.value.trim().toLowerCase(); render(); }
+});
+document.addEventListener('change', (e) => {
+  const f = state.reqFilter;
+  if (e.target.id === 'rf-account') f.account = e.target.value;
+  else if (e.target.id === 'rf-model') f.model = e.target.value;
+  else if (e.target.id === 'rf-failed') f.failed = e.target.checked ? '1' : '';
+  else if (e.target.id === 'live') { state.live = e.target.checked; schedule(); renderPulse(); return; }
+  else return;
+  state.requests = null; render(); loadRequests().then(render);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && !e.metaKey && !e.ctrlKey && !/input|select|textarea/i.test(document.activeElement?.tagName || '') && !document.querySelector('dialog[open]')) {
+    const f = $('#filter');
+    if (f) { e.preventDefault(); f.focus(); f.select(); }
+  }
+  if (e.key === 'Escape' && document.activeElement?.id === 'filter') { state.filter = ''; e.target.value = ''; render(); }
+});
+
+function route() {
+  const [path, query] = (location.hash.replace(/^#/, '') || '/').split('?');
+  state.route = { '/': 'overview', '/usage': 'usage', '/requests': 'requests' }[path] || 'overview';
+  const params = new URLSearchParams(query || '');
+  if (state.route === 'requests' && params.has('failed')) { state.reqFilter = { account: '', model: '', failed: params.get('failed') === '1' ? '1' : '' }; state.requests = null; }
+  // Keep the previous console's deep link working.
+  if (path === '/accounts') state.route = 'overview';
+  closeMenu();
+  render();
+  $('#main').focus({ preventScroll: true });
+  window.scrollTo(0, 0);
+  refresh({ quiet: true });
+}
+window.addEventListener('hashchange', route);
+
+let timer = null, liveTimer = null;
+function schedule() {
+  clearInterval(timer); clearInterval(liveTimer);
+  if (!state.live) return;
+  timer = setInterval(() => { if (document.visibilityState === 'visible') refresh({ quiet: true }); }, 30000);
+  // Live routing is an in-memory read on the gateway; cheap enough to follow closely.
+  liveTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && state.route === 'overview') loadLive().then(updateLive);
+  }, 3000);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.live) refresh({ quiet: true }); });
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
+// Countdowns and "ago" labels stay honest between data refreshes.
+setInterval(() => { if (document.visibilityState === 'visible' && !document.activeElement?.closest?.('.search')) render(); }, 30000);
+
+setPrivacy(state.privacy);
+route();
+schedule();
+</script>
+</body>
+</html>

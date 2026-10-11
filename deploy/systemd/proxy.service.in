@@ -1,0 +1,21 @@
+# Example proxy unit. Print it with `scripts/deploy.py --print-proxy-unit`, review, and install
+# it yourself: deploy never installs or restarts the proxy.
+[Unit]
+Description=CLIProxyAPI (pooled Claude and Codex accounts)
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@CLIPROXY_HOME@/home
+ExecStart=@PROXY_BINARY@ -config @PROXY_CONFIG@
+ExecStartPost=/usr/bin/env PROXY_PORT=@PROXY_PORT@ CLIENT_KEY_FILE=@CLIENT_KEY_FILE@ /usr/bin/python3 @REPO@/bin/proxy-service-ready.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+# The console tails this file for live routing; keep it in sync with PROXY_LOG.
+StandardOutput=append:@PROXY_LOG@
+StandardError=append:@PROXY_LOG@
+
+[Install]
+WantedBy=default.target

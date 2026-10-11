@@ -1,0 +1,8 @@
+{
+  "project": "https://github.com/router-for-me/CLIProxyAPI",
+  "tag": "v8.0.10",
+  "commit": "6fecc6e5567912661654a4eaf9b8f5436facd1c2",
+  "source_url": "https://codeload.github.com/router-for-me/CLIProxyAPI/tar.gz/6fecc6e5567912661654a4eaf9b8f5436facd1c2",
+  "source_sha256": "1e154f1c29e5ee48a12533589efbcb400d68a07ecf98fd1dbbd978c16e4e4117",
+  "go_version": "go1.26.8"
+}

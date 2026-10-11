@@ -1,0 +1,11 @@
+{
+  "sdk/cliproxy/auth/selector.go": {
+    "upstream_sha256": "66bf023a68713c6c54b01d73319ac1234ac5d83199f5895968c016dc48acec17"
+  },
+  "sdk/cliproxy/service_config.go": {
+    "upstream_sha256": "090b7528cf59726df3590a16a89d0c7506b2a03477ede4db85a8afc260724011"
+  },
+  "internal/config/config_types.go": {
+    "upstream_sha256": "83e1fbb07ff99184622928d6acf8214624ed3d24a570b2060f90723a467cba57"
+  }
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Add a Claude account to the proxy from a terminal (the console's Add button does the same).
+set -euo pipefail
+umask 077
+source "$(dirname "$(readlink -f "$0")")/_config.sh"
+if [[ ! -t 0 ]]; then
+  echo "Run this sign-in in your own interactive terminal; never paste authentication data into a chat." >&2
+  exit 78
+fi
+printf '%s\n' 'Sign in to the Claude account you want to add, using the browser URL shown below.' \
+  'The callback listens only on 127.0.0.1:54545 (proxy/patches/claude-loopback.patch).' \
+  'For another account, run this again with a different browser profile or after signing out.'
+exec env -i HOME="$CLIPROXY_HOME/home" PATH=/usr/bin:/bin XDG_CONFIG_HOME="$CLIPROXY_HOME/home/.config" \
+  "$PROXY_BINARY" -config "$PROXY_CONFIG" -claude-login -no-browser
