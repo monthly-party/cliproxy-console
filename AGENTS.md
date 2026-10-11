@@ -1,5 +1,7 @@
 # Agent notes
 
+- Installing on a new machine: follow `INSTALL.agent.md`.
+
 - This repo is the source of truth for the console. `$CONSOLE_DIR` (from
   `~/.config/cliproxy-console/config.env`) is only a deploy target: don't edit files there, and
   never read or copy the proxy's `private/`, `auth/` or `home/` directories.

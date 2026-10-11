@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -29,7 +30,12 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parents[1]
-UNIT_DIR = Path.home() / '.config/systemd/user'
+# Linux (and WSL2) run the services under systemd --user; macOS under launchd user agents.
+MAC = platform.system() == 'Darwin'
+UNIT_DIR = Path.home() / ('Library/LaunchAgents' if MAC else '.config/systemd/user')
+TEMPLATES = ({'console': 'launchd/console.plist.in', 'proxy': 'launchd/proxy.plist.in'} if MAC else
+             {'console': 'systemd/console.service.in', 'proxy': 'systemd/proxy.service.in'})
+DOMAIN = f'gui/{os.getuid()}'
 REQUIRED = ['CLIPROXY_HOME', 'PROXY_PORT', 'PROXY_BINARY', 'PROXY_CONFIG', 'PROXY_LOG', 'MANAGEMENT_KEY_FILE',
             'CLIENT_KEY_FILE', 'CONSOLE_DIR', 'CONSOLE_PORT', 'QUOTA_SNAPSHOT', 'BACKUP_DIR', 'CONSOLE_ORIGIN',
             'CONSOLE_OWNER', 'PROXY_UNIT', 'CONSOLE_UNIT', 'PROTECTED_UNITS']
@@ -69,17 +75,43 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout.strip()
 
 
+def unit_path(unit):
+    return UNIT_DIR / (unit + '.plist' if MAC else unit)
+
+
 def pid(unit):
+    """Main PID of a user service, or '0' when it isn't running."""
+    if MAC:
+        printed = subprocess.run(['launchctl', 'print', f'{DOMAIN}/{unit}'], capture_output=True, text=True).stdout
+        found = re.search(r'^\s*pid = (\d+)', printed, re.M)
+        return found.group(1) if found else '0'
     return run('systemctl', '--user', 'show', unit, '-p', 'MainPID', '--value')
+
+
+def reload_unit(unit):
+    """Make the service manager pick up a changed unit file."""
+    if MAC:
+        subprocess.run(['launchctl', 'bootout', f'{DOMAIN}/{unit}'], capture_output=True)  # not loaded yet is fine
+        run('launchctl', 'bootstrap', DOMAIN, str(unit_path(unit)))
+    else:
+        run('systemctl', '--user', 'daemon-reload')
+
+
+def restart(unit):
+    if MAC:
+        run('launchctl', 'kickstart', '-k', f'{DOMAIN}/{unit}')
+    else:
+        run('systemctl', '--user', 'restart', unit)
 
 
 def sources():
     return {p.name: p for p in sorted((REPO / 'gateway').iterdir()) if p.suffix in ('.py', '.html')}
 
 
-def render(template):
-    text = (REPO / 'deploy/systemd' / template).read_text()
-    text = text.replace('@REPO@', str(REPO))
+def render(kind):
+    template = TEMPLATES[kind]
+    text = (REPO / 'deploy' / template).read_text()
+    text = text.replace('@REPO@', str(REPO)).replace('@PYTHON@', sys.executable)
     for name, value in CONFIG.items():
         text = text.replace(f'@{name}@', value)
     left = re.findall(r'@[A-Z_]+@', text)
@@ -132,14 +164,14 @@ def install(source, target):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--dry-run', action='store_true')
-    parser.add_argument('--units', action='store_true', help='install changed systemd units too')
+    parser.add_argument('--units', action='store_true', help="install the console's service unit too (needed on first deploy)")
     parser.add_argument('--adopt', action='store_true', help='accept live files that differ from the repo on first deploy')
     parser.add_argument('--allow-dirty', action='store_true', help='deploy uncommitted changes (records -dirty)')
     parser.add_argument('--skip-tests', action='store_true')
     parser.add_argument('--print-proxy-unit', action='store_true', help='print an example proxy unit and exit')
     options = parser.parse_args()
     if options.print_proxy_unit:
-        print(render('proxy.service.in'), end='')
+        print(render('proxy'), end='')
         return
 
     dirty = run('git', '-C', str(REPO), 'status', '--porcelain')
@@ -166,16 +198,18 @@ def main():
                          '\nCopy those edits into the repo (or rerun with --adopt on a first deploy) before deploying.')
 
     changed = [n for n, p in files.items() if not (LIVE / n).exists() or sha(LIVE / n) != sha(p)]
-    unit_text = render('console.service.in')
-    unit_path = UNIT_DIR / GATEWAY_UNIT
-    unit_changes = [] if unit_path.exists() and unit_path.read_text() == unit_text else [GATEWAY_UNIT]
+    unit_text = render('console')
+    console_unit = unit_path(GATEWAY_UNIT)
+    unit_changes = [] if console_unit.exists() and console_unit.read_text() == unit_text else [GATEWAY_UNIT]
     if unit_changes and not options.units:
-        print(f'Note: {GATEWAY_UNIT} differs from deploy/systemd/console.service.in (pass --units to install it).')
+        if not console_unit.exists():
+            raise SystemExit(f'{console_unit} is not installed yet; run the first deploy with --units.')
+        print(f'Note: {console_unit} differs from deploy/{TEMPLATES["console"]} (pass --units to install it).')
         unit_changes = []
-    restart = any(n.endswith('.py') for n in changed) or bool(unit_changes)
+    needs_restart = any(n.endswith('.py') for n in changed) or bool(unit_changes)
 
     print(f'commit {commit[:12]}  files: {", ".join(changed) or "none"}  unit: {", ".join(unit_changes) or "unchanged"}'
-          f'  gateway restart: {"yes" if restart else "no"}')
+          f'  console restart: {"yes" if needs_restart else "no"}')
     if options.dry_run:
         return
     manifest = {'commit': commit, 'deployed_at': datetime.now(timezone.utc).isoformat(),
@@ -192,21 +226,21 @@ def main():
     for name in changed:
         if (LIVE / name).exists():
             shutil.copy2(LIVE / name, backup / name)
-    if unit_changes and unit_path.exists():
-        (backup / 'systemd').mkdir()
-        shutil.copy2(unit_path, backup / 'systemd' / GATEWAY_UNIT)
+    if unit_changes and console_unit.exists():
+        (backup / 'unit').mkdir()
+        shutil.copy2(console_unit, backup / 'unit' / console_unit.name)
 
     before = {unit: pid(unit) for unit in UNTOUCHED}
     try:
         for name in changed:
             install(files[name], LIVE / name)
         if unit_changes:
-            rendered = backup / 'rendered.service'
+            rendered = backup / 'rendered-unit'
             rendered.write_text(unit_text)
-            install(rendered, unit_path)
-            run('systemctl', '--user', 'daemon-reload')
-        if restart:
-            run('systemctl', '--user', 'restart', GATEWAY_UNIT)
+            install(rendered, console_unit)
+            reload_unit(GATEWAY_UNIT)
+        if needs_restart:
+            restart(GATEWAY_UNIT)
         healthy(sha(files['dashboard.html']))
         after = {unit: pid(unit) for unit in UNTOUCHED}
         if after != before:
@@ -218,17 +252,16 @@ def main():
                 install(backup / name, LIVE / name)
             else:
                 (LIVE / name).unlink(missing_ok=True)
-        if unit_changes and (backup / 'systemd' / GATEWAY_UNIT).exists():
-            install(backup / 'systemd' / GATEWAY_UNIT, unit_path)
-        if unit_changes:
-            run('systemctl', '--user', 'daemon-reload')
-        if restart:
-            run('systemctl', '--user', 'restart', GATEWAY_UNIT)
+        if unit_changes and (backup / 'unit' / console_unit.name).exists():
+            install(backup / 'unit' / console_unit.name, console_unit)
+            reload_unit(GATEWAY_UNIT)
+        if needs_restart:
+            restart(GATEWAY_UNIT)
         raise SystemExit(1)
 
     MANIFEST.write_text(json.dumps(manifest, indent=2) + '\n')
     os.chmod(MANIFEST, 0o600)
-    print(f'Deployed {commit[:12]}. Backup: {backup}. Proxy and T3 PIDs unchanged: {before}')
+    print(f'Deployed {commit[:12]}. Backup: {backup}. Protected services kept their PIDs: {before}')
 
 
 if __name__ == '__main__':

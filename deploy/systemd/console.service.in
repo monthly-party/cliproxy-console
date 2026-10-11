@@ -1,4 +1,4 @@
-# Rendered by scripts/deploy.py --units into ~/.config/systemd/user/$CONSOLE_UNIT.
+# Rendered by scripts/deploy.py --units into ~/.config/systemd/user/$CONSOLE_UNIT (Linux).
 [Unit]
 Description=cliproxy-console owner gateway
 Wants=@PROXY_UNIT@
@@ -8,7 +8,7 @@ After=@PROXY_UNIT@
 Type=simple
 WorkingDirectory=@CONSOLE_DIR@
 Environment=PROXY_PORT=@PROXY_PORT@
-ExecStart=/usr/bin/python3 @CONSOLE_DIR@/management_gateway_owner.py --port @CONSOLE_PORT@ --html @CONSOLE_DIR@/dashboard.html --key-file @MANAGEMENT_KEY_FILE@ --owner-login @CONSOLE_OWNER@ --origin @CONSOLE_ORIGIN@ --quota-snapshot @QUOTA_SNAPSHOT@ --quota-cache @CONSOLE_DIR@/quota-cache.json --usage-db @CONSOLE_DIR@/usage.db --proxy-log @PROXY_LOG@
+ExecStart=@PYTHON@ @CONSOLE_DIR@/management_gateway_owner.py --port @CONSOLE_PORT@ --html @CONSOLE_DIR@/dashboard.html --key-file @MANAGEMENT_KEY_FILE@ --owner-login @CONSOLE_OWNER@ --origin @CONSOLE_ORIGIN@ --quota-snapshot @QUOTA_SNAPSHOT@ --quota-cache @CONSOLE_DIR@/quota-cache.json --usage-db @CONSOLE_DIR@/usage.db --proxy-log @PROXY_LOG@
 Restart=on-failure
 RestartSec=5
 UMask=0077

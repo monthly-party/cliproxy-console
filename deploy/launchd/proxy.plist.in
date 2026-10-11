@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Example proxy agent (macOS). Print it with scripts/deploy.py and its print-proxy-unit option, review it, and
+     install it yourself into ~/Library/LaunchAgents/$PROXY_UNIT.plist: deploy never touches the proxy. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>@PROXY_UNIT@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PROXY_BINARY@</string>
+    <string>-config</string><string>@PROXY_CONFIG@</string>
+  </array>
+  <key>WorkingDirectory</key><string>@CLIPROXY_HOME@/home</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>Umask</key><integer>63</integer>
+  <!-- The console tails this file for live routing; keep it equal to PROXY_LOG. -->
+  <key>StandardOutPath</key><string>@PROXY_LOG@</string>
+  <key>StandardErrorPath</key><string>@PROXY_LOG@</string>
+</dict>
+</plist>

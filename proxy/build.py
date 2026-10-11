@@ -61,7 +61,11 @@ def main():
         shutil.rmtree(source)
     with tarfile.open(archive) as tar:
         top = tar.getmembers()[0].name.split('/')[0]
-        tar.extractall(options.work, filter='data')
+        try:
+            tar.extractall(options.work, filter='data')
+        except TypeError:
+            # Python before 3.11.4 has no extraction filters; the archive hash is already verified.
+            tar.extractall(options.work)
     (options.work / top).rename(source)
 
     manifest = json.loads((HERE / 'overlay-manifest.json').read_text())

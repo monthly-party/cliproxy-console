@@ -22,6 +22,24 @@ What it shows and does:
 It is one Python gateway (standard library only) plus a single HTML file. No build step,
 no npm, no database server.
 
+## Install with an AI agent
+
+Paste this into Claude Code, Codex or another agent that can run commands on the machine
+you want to set up:
+
+```text
+Install cliproxy-console on this machine. Clone https://github.com/monthly-party/cliproxy-console
+(use my gh login if it asks for credentials), then follow INSTALL.agent.md in that repo from
+start to finish. Ask me before installing packages, using sudo, overwriting files, or changing
+existing Tailscale Serve settings. Never show me or write out any key or token. Finish when
+scripts/doctor.py reports 0 failed, then tell me how to open the console and add my accounts.
+```
+
+[`INSTALL.agent.md`](INSTALL.agent.md) walks the agent through every step: checking the
+machine, choosing settings with you, keys, building or downloading the proxy, services,
+Tailscale Serve, client wrappers and a final check. You only sign in to your accounts
+yourself, in the console.
+
 ## How it fits together
 
 ```
@@ -51,35 +69,40 @@ management routes, and never sends a token or the management key to the page.
 | `gateway/dashboard.html` | The page |
 | `proxy/` | Build script, a loopback patch for the Claude OAuth callback, and the weekly-reset routing overlay |
 | `bin/` | `claude-proxy` / `codex-proxy` client wrappers, sign-in helpers, readiness probe |
-| `deploy/` | systemd unit templates and an example proxy config |
-| `scripts/deploy.py` | Installs the gateway into `$CONSOLE_DIR` safely |
+| `deploy/` | systemd and launchd templates, and an example proxy config |
+| `scripts/deploy.py` | Installs the gateway into `$CONSOLE_DIR` safely (systemd or launchd) |
+| `scripts/make-proxy-config.py` | Writes the proxy config from the example and your key files |
+| `scripts/doctor.py` | Read-only checks of the machine and the install |
+| `INSTALL.agent.md` | Step-by-step install guide written for an AI agent |
 
 ## Requirements
 
-- Linux with systemd user services, Python 3.11+.
+- Linux with systemd user services (WSL2 with systemd works), or macOS (launchd). Python 3.9+ (macOS's built-in python3 is fine).
 - [Tailscale](https://tailscale.com) with HTTPS enabled, for `tailscale serve`.
 - CLIProxyAPI v8. Build it with `proxy/build.py` (needs Go; see `proxy/upstream.json`) to
   get the weekly-reset routing and the loopback patch, or use a stock release with another
   routing strategy.
 - One or more Claude Pro/Max and/or ChatGPT Plus/Pro accounts.
 
-## Setup
+## Manual setup
+
+The same steps the agent guide follows, in short. `scripts/doctor.py --stage pre` checks
+the machine first; `scripts/doctor.py` checks the whole install at any time.
 
 1. **Settings.** `mkdir -p ~/.config/cliproxy-console && cp config.env.example ~/.config/cliproxy-console/config.env`,
    then edit it: install directory, ports, your Tailscale https origin and login, unit names.
    Every other step reads this file.
 2. **Proxy binary.** `proxy/build.py --out "$PROXY_BINARY"` (or download a release).
-3. **Proxy config and keys.** Copy `deploy/config.example.yaml` to `$PROXY_CONFIG` and fill it in:
-   - Generate a management key (`openssl rand -hex 32`). Save it to `$MANAGEMENT_KEY_FILE`
-     and paste it into `management.secret-key`; the proxy replaces it with a bcrypt hash on
-     first start.
-   - Generate a client key the same way. Save it to `$CLIENT_KEY_FILE` and put it in
-     `access.api-keys`.
-   - Keep `observability.usage.usage-statistics-enabled: true` so the console sees tokens.
-   - Run `chmod 600` on all three files.
-4. **Proxy service.** `scripts/deploy.py --print-proxy-unit > ~/.config/systemd/user/$PROXY_UNIT`,
-   review it, then `systemctl --user daemon-reload && systemctl --user enable --now $PROXY_UNIT`.
-5. **Console.** `scripts/deploy.py --units`, then `systemctl --user enable $CONSOLE_UNIT`.
+3. **Keys and proxy config.** Generate two keys into files with
+   `umask 077; openssl rand -hex 32 > "$MANAGEMENT_KEY_FILE"` (and the same for
+   `$CLIENT_KEY_FILE`), then run `scripts/make-proxy-config.py` (add `--stock` for a stock
+   binary). It writes `$PROXY_CONFIG` from `deploy/config.example.yaml` without printing the
+   keys; the proxy hashes the management key on first start.
+4. **Proxy service.** `scripts/deploy.py --print-proxy-unit` prints a systemd unit (Linux) or
+   launchd plist (macOS) for your settings. Review it, install it into
+   `~/.config/systemd/user/$PROXY_UNIT` or `~/Library/LaunchAgents/$PROXY_UNIT.plist`, and
+   start it.
+5. **Console.** `scripts/deploy.py --units` (Linux: then `systemctl --user enable $CONSOLE_UNIT`).
 6. **Expose it to yourself.** `tailscale serve --bg --https=8444 http://127.0.0.1:$CONSOLE_PORT`.
    Open `$CONSOLE_ORIGIN`.
 7. **Add accounts** with the console's Add buttons, or `bin/sign-in-claude` / `bin/sign-in-codex`.

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Rendered by "scripts/deploy.py with the units option" into ~/Library/LaunchAgents/$CONSOLE_UNIT.plist (macOS). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>@CONSOLE_UNIT@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>@CONSOLE_DIR@/management_gateway_owner.py</string>
+    <string>--port</string><string>@CONSOLE_PORT@</string>
+    <string>--html</string><string>@CONSOLE_DIR@/dashboard.html</string>
+    <string>--key-file</string><string>@MANAGEMENT_KEY_FILE@</string>
+    <string>--owner-login</string><string>@CONSOLE_OWNER@</string>
+    <string>--origin</string><string>@CONSOLE_ORIGIN@</string>
+    <string>--quota-snapshot</string><string>@QUOTA_SNAPSHOT@</string>
+    <string>--quota-cache</string><string>@CONSOLE_DIR@/quota-cache.json</string>
+    <string>--usage-db</string><string>@CONSOLE_DIR@/usage.db</string>
+    <string>--proxy-log</string><string>@PROXY_LOG@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PROXY_PORT</key><string>@PROXY_PORT@</string></dict>
+  <key>WorkingDirectory</key><string>@CONSOLE_DIR@</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardErrorPath</key><string>@CLIPROXY_HOME@/logs/console.log</string>
+</dict>
+</plist>

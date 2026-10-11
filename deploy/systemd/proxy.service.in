@@ -9,7 +9,7 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=@CLIPROXY_HOME@/home
 ExecStart=@PROXY_BINARY@ -config @PROXY_CONFIG@
-ExecStartPost=/usr/bin/env PROXY_PORT=@PROXY_PORT@ CLIENT_KEY_FILE=@CLIENT_KEY_FILE@ /usr/bin/python3 @REPO@/bin/proxy-service-ready.py
+ExecStartPost=/usr/bin/env PROXY_PORT=@PROXY_PORT@ CLIENT_KEY_FILE=@CLIENT_KEY_FILE@ @PYTHON@ @REPO@/bin/proxy-service-ready.py
 Restart=on-failure
 RestartSec=5
 UMask=0077
