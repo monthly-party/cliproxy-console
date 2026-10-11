@@ -22,6 +22,12 @@ What it shows and does:
 It is one Python gateway (standard library only) plus a single HTML file. No build step,
 no npm, no database server.
 
+![Overview: quota per account, who is serving right now, tokens in the last 24 hours](docs/overview-dark.png)
+
+![Usage: tokens by account, output speed, latency, models, clients and failures](docs/usage-light.png)
+
+Both screenshots have privacy mode on: emails are masked and charts use aliases.
+
 ## Install with an AI agent
 
 Paste this into Claude Code, Codex or another agent that can run commands on the machine
