@@ -7,6 +7,7 @@ forwarded-for chain, response headers, access-token hash or failure body.
 Session ids are stored as a short one-way hash, enough to count sessions.
 """
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 import hashlib
@@ -197,12 +198,19 @@ class UsageLedger:
             db.executescript(SCHEMA)
             db.execute("insert or ignore into meta(key, value) values ('started_at', ?)", (str(self.clock()),))
 
+    @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute('pragma journal_mode=wal')
-        db.execute('pragma synchronous=normal')
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute('pragma journal_mode=wal')
+            db.execute('pragma synchronous=normal')
+            with db:
+                yield db
+        finally:
+            # SQLite's transaction context commits/rolls back but does not close.
+            # Close explicitly so collectors and dashboard reads cannot exhaust FDs.
+            db.close()
 
     # ------------------------------------------------------------- collection
 

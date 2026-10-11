@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import usage_ledger
@@ -79,6 +80,66 @@ class LedgerTests(unittest.TestCase):
 
     def ledger(self, *batches):
         return UsageLedger('k' * 32, self.path, fetch=Queue(*batches), clock=lambda: NOW)
+
+    def test_collector_and_dashboard_connections_close_without_gc(self):
+        # Retain real connections so garbage collection cannot mask leaked handles.
+        opened = []
+        original = sqlite3.connect
+
+        def connect(*args, **kwargs):
+            db = original(*args, **kwargs)
+            opened.append(db)
+            return db
+
+        try:
+            with patch.object(usage_ledger.sqlite3, 'connect', side_effect=connect):
+                ledger = self.ledger([record()])
+                ledger.tick()
+                ledger.remember_accounts([])
+                for _ in range(20):
+                    ledger.status()
+                    ledger.accounts()
+                    ledger.usage('24h')
+                    ledger.requests()
+                    ledger.quota_history('7d')
+            for db in opened:
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    db.execute('select 1')
+        finally:
+            for db in opened:
+                db.close()
+
+    def test_failed_transaction_rolls_back_and_closes(self):
+        ledger = self.ledger()
+        with self.assertRaisesRegex(RuntimeError, 'failed write'):
+            with ledger.connect() as db:
+                db.execute("insert into meta values ('rollback-test', 'uncommitted')")
+                raise RuntimeError('failed write')
+        try:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                db.execute('select 1')
+            with ledger.connect() as check:
+                self.assertIsNone(check.execute("select value from meta where key = 'rollback-test'").fetchone())
+        finally:
+            db.close()
+
+    def test_setup_error_closes_connection(self):
+        ledger = self.ledger()
+        class BrokenSetup(sqlite3.Connection):
+            def execute(self, sql, *args):
+                if sql == 'pragma synchronous=normal':
+                    raise sqlite3.OperationalError('setup failed')
+                return super().execute(sql, *args)
+        db = sqlite3.connect(self.path, factory=BrokenSetup)
+        try:
+            with patch.object(usage_ledger.sqlite3, 'connect', return_value=db):
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'setup failed'):
+                    with ledger.connect():
+                        self.fail('setup should fail')
+            with self.assertRaises(sqlite3.ProgrammingError):
+                db.execute('select 1')
+        finally:
+            db.close()
 
     def test_database_is_private(self):
         self.ledger()
