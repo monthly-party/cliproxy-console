@@ -13,6 +13,13 @@ What it shows and does:
 - **Token usage per account**: a local ledger of every request (input, cache read/write,
   output, reasoning), with 24h / 7d / 30d / 90d history, models, clients, failures,
   latency, time to first token and output speed (tok/s).
+- **API estimate**: what the same tokens would cost at public pay-as-you-go list prices,
+  per account, model, client, request and hour/day, split by token type, with cache
+  savings. Prices come from LiteLLM's public table (the source T3 Code's usage page uses);
+  long-context tiers are applied per request. The accounts are subscriptions, so it is an
+  estimate, not a bill.
+- **Phone layout**: bottom tab bar, stacked rows instead of wide tables, tap for chart and
+  figure details.
 - **Quota history**: weekly usage per account over time.
 - **Account actions**: add (OAuth sign-in), remove, set a priority account, check usage
   now, use a reset ticket (hold to confirm, re-checked with the provider first).
@@ -54,6 +61,7 @@ clients (Claude Code, Codex, …) ──► proxy :8317 (CLIProxyAPI v8, optiona
 Tailscale Serve (https) ──► gateway :8318 (gateway/)
                                          ├─ dashboard.html
                                          ├─ usage_ledger.py  → $CONSOLE_DIR/usage.db (SQLite)
+                                         ├─ pricing.py       → $CONSOLE_DIR/model-rates.json (daily, from LiteLLM)
                                          ├─ quota_poller.py  → quota snapshot + cache (10-minute polling)
                                          ├─ live_activity.py ← $PROXY_LOG
                                          └─ reset_tickets.py → provider APIs through the proxy
@@ -70,6 +78,7 @@ management routes, and never sends a token or the management key to the page.
 | `gateway/account_preferences.py` | Priority account changes, with rollback |
 | `gateway/quota_poller.py`, `quota_priority.py` | Shared provider quota polling; next-account-by-quota projection |
 | `gateway/usage_ledger.py` | Drains the proxy usage queue into SQLite; usage, requests and quota-history queries |
+| `gateway/pricing.py` | List prices from LiteLLM (daily refresh, private on-disk copy) and the cost formula |
 | `gateway/live_activity.py` | Tails the proxy log for in-flight requests and sticky sessions |
 | `gateway/reset_tickets.py` | Spends one Claude or Codex reset ticket after a fresh provider check |
 | `gateway/dashboard.html` | The page |
@@ -140,6 +149,12 @@ or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the 
   The ledger keeps 400 days of per-request counters, model, client and latency. It stores no
   API keys, IP addresses, headers or error bodies; session ids are hashed.
 - Using a reset ticket and changing the priority account are real account actions.
+- The API estimate is computed when you read it, so a newer price table re-prices all of
+  history. The gateway fetches
+  `raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json` at
+  most once a day (no credentials, no usage data sent) and keeps the last good copy if a
+  fetch fails. Models without a list price are counted but not priced, and the page says so.
+  Cache writes use the 5-minute rate because the proxy does not report the cache TTL.
 - Any UI that shows an account email must go through `emailHTML()` or `aliasOf()` in
   `dashboard.html` so privacy mode covers it.
 

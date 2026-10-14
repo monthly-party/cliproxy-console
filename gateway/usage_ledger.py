@@ -20,6 +20,7 @@ import threading
 import time
 
 from settings import PROXY_HOST, PROXY_PORT
+from pricing import RateTable
 
 QUEUE_PATH = '/v8/management/observability/usage/queue?count=500'
 MAX_BYTES = 8 * 1024 * 1024
@@ -27,6 +28,8 @@ RETENTION_DAYS = 400
 RANGES = {'24h': (86400, 3600), '7d': (7 * 86400, 6 * 3600),
           '30d': (30 * 86400, 86400), '90d': (90 * 86400, 86400)}
 TOKEN_FIELDS = ('input', 'cache_read', 'cache_write', 'output', 'reasoning', 'total')
+COST_FIELDS = ('input', 'cache_read', 'cache_write', 'output')
+NO_RATES = RateTable({})
 
 SCHEMA = """
 create table if not exists requests (
@@ -180,11 +183,13 @@ def fetch_queue(key):
 class UsageLedger:
     """Owns the SQLite file. One collector thread writes; request threads read."""
 
-    def __init__(self, key, path, fetch=None, clock=None):
+    def __init__(self, key, path, fetch=None, clock=None, rates=None):
         self.key = key
         self.path = Path(path)
         self.fetch = fetch or fetch_queue
         self.clock = clock or time.time
+        # Prices are applied when read, so a newer rate table re-prices all of history.
+        self.rates = rates
         self.lock = threading.Lock()
         self.pending = []
         self.last_poll_at = None
@@ -319,6 +324,46 @@ class UsageLedger:
 
     # ------------------------------------------------------------------ reads
 
+    def rate_table(self):
+        return self.rates.table if self.rates is not None else NO_RATES
+
+    def costs(self, db, table, lower, upper, offset=0, size=None):
+        """API-list-price cost for one period, folded into the keys the usage view reports.
+
+        Rows are grouped by served model, speed tier and prompt-size tier first, so each group
+        has exactly one price; long-context requests land in their own group.
+        """
+        prompt = table.prompt_bucket_sql('(input + cache_read + cache_write)')
+        slot, slot_values = ('cast((ts + ? - ?) / ? as integer)', (offset, lower + offset, size)) if size else ('0', ())
+        sums = ', '.join(f'sum({field}) as {field}' for field in (*COST_FIELDS, 'total'))
+        rows = db.execute(
+            f'select auth_index, model, client, coalesce(response_model, model) as priced, service_tier, {prompt} as prompt, '
+            f'{slot} as slot, count(*) as requests, {sums} from requests where ts >= ? and ts < ? '
+            'group by auth_index, model, client, priced, service_tier, prompt, slot', (*slot_values, lower, upper))
+
+        def blank():
+            return {'cost': 0.0, **{f'{field}_cost': 0.0 for field in COST_FIELDS}, 'savings': 0.0,
+                    'unpriced_tokens': 0, 'unpriced_requests': 0}
+        result = {'totals': blank(), 'accounts': {}, 'series': {}, 'models': {}, 'clients': {}, 'unpriced_models': set()}
+        for row in map(dict, rows):
+            # The bucket is the largest tier edge the prompt exceeds; one token past it selects that tier.
+            cost = table.price(row['priced'], row['service_tier'], row['prompt'] + 1 if row['prompt'] else 0, row)
+            if cost is None:
+                result['unpriced_models'].add(row['priced'])
+            targets = (result['totals'], result['accounts'].setdefault(row['auth_index'], blank()),
+                       result['series'].setdefault((row['auth_index'], row['slot']), blank()),
+                       result['models'].setdefault(row['model'], blank()), result['clients'].setdefault(row['client'], blank()))
+            for target in targets:
+                if cost is None:
+                    target['unpriced_tokens'] += row['total'] or 0
+                    target['unpriced_requests'] += row['requests']
+                    continue
+                target['cost'] += cost['total']
+                target['savings'] += cost['savings']
+                for field in COST_FIELDS:
+                    target[f'{field}_cost'] += cost[field]
+        return result
+
     def status(self):
         with self.connect() as db:
             started = db.execute("select value from meta where key = 'started_at'").fetchone()
@@ -377,13 +422,27 @@ class UsageLedger:
             statuses = [dict(row) for row in db.execute(
                 'select status, count(*) as requests from requests where ts >= ? and ts < ? and failed = 1 '
                 'group by status order by requests desc', (start, end))]
+            table = self.rate_table()
+            cost = self.costs(db, table, start, end, offset, size)
+            previous_cost = self.costs(db, table, start - span, start)['totals']
             result = {'range': range_key, 'start': start, 'end': end, 'bucket_seconds': size,
                       'totals': totals(start, end), 'previous': totals(start - span, start),
                       'models': models, 'clients': clients, 'failures': statuses,
-                      'tps_p50': percentile(all_speeds, 50), 'tps_samples': len(all_speeds)}
+                      'tps_p50': percentile(all_speeds, 50), 'tps_samples': len(all_speeds),
+                      'pricing': table.describe(), 'unpriced_models': sorted(cost['unpriced_models'])[:20]}
+            result['totals'].update(money(cost['totals']))
+            result['previous'].update(money(previous_cost))
             for model in models:
                 model['tps_p50'] = percentile(model_speeds.get(model['model'], []), 50)
+                model.update(money(cost['models'].get(model['model'])))
+            for client in clients:
+                client.update(money(cost['clients'].get(client['client'])))
+        for (index, slot), priced in cost['series'].items():
+            points = series.setdefault(index, [None] * (span // size))
+            if 0 <= slot < len(points):
+                points[slot] = {**(points[slot] or {}), 'cost': round(priced['cost'], 6)}
         for account in accounts:
+            account.update(money(cost['accounts'].get(account['auth_index'])))
             points = series.get(account['auth_index'], [])
             account['series'] = [point or {} for point in points] or [{}] * (span // size)
             done, first = latencies.get(account['auth_index'], ([], []))
@@ -394,7 +453,7 @@ class UsageLedger:
             account['tps_p90'] = percentile(speeds.get(account['auth_index'], []), 90)
         result['accounts'] = accounts
         result['series'] = [
-            {key: sum((series[index][slot] or {}).get(key, 0) for index in series) for key in ('requests', 'failed', *TOKEN_FIELDS)}
+            {key: sum((series[index][slot] or {}).get(key, 0) for index in series) for key in ('requests', 'failed', *TOKEN_FIELDS, 'cost')}
             for slot in range(span // size)]
         return result
 
@@ -415,8 +474,12 @@ class UsageLedger:
                 f'select id, ts, auth_index, provider, model, response_model, endpoint, client, session, input, cache_read, '
                 f'cache_write, output, reasoning, total, latency_ms, ttft_ms, failed, status, stream, reasoning_effort, '
                 f'service_tier from requests {where} order by ts desc, id desc limit ?', (*values, limit + 1))]
+        table = self.rate_table()
         for row in rows:
             row['tps'] = speed(row['output'], row['latency_ms'], row['ttft_ms'], row['stream'], row['failed'])
+            priced = table.price(row['response_model'] or row['model'], row['service_tier'],
+                                 row['input'] + row['cache_read'] + row['cache_write'], row)
+            row['cost'] = round(priced['total'], 6) if priced else None
         last = rows[limit - 1] if len(rows) > limit else None
         return {'requests': rows[:limit], 'next_before': f"{last['ts']!r}_{last['id']}" if last else None}
 
@@ -432,6 +495,15 @@ class UsageLedger:
                                                  'kind': row['kind'], 'model': row['model'], 'points': []})
                 entry['points'].append([row['observed_at'], row['used_percent'], row['reset_at']])
         return {'range': range_key, 'start': start, 'windows': list(history.values())}
+
+
+def money(priced):
+    """Rounded cost fields for one aggregate. Tokens no rate covers are counted, not priced at zero."""
+    priced = priced or {}
+    result = {key: round(priced.get(key, 0.0), 6) for key in ('cost', 'savings', *(f'{field}_cost' for field in COST_FIELDS))}
+    result['unpriced_tokens'] = priced.get('unpriced_tokens', 0)
+    result['unpriced_requests'] = priced.get('unpriced_requests', 0)
+    return result
 
 
 def speed(output, latency_ms, ttft_ms, stream=1, failed=0):

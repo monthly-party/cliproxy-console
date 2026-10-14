@@ -16,6 +16,7 @@ import time
 from owner_auth_policy import authorize_owner_request
 from account_preferences import AccountPreferences, PreferenceError, preference_records, attach_preferences
 import usage_ledger
+from pricing import Rates
 from settings import PROXY_HOST, PROXY_PORT
 from reset_tickets import ResetTickets, TicketError
 from live_activity import LiveActivity
@@ -492,7 +493,17 @@ if __name__ == '__main__':
                 time.sleep(1)
         threading.Thread(target=follow_log, daemon=True).start()
     if options.usage_db:
-        Gateway.ledger = usage_ledger.UsageLedger(Gateway.key.decode(), options.usage_db)
+        # Public list prices for the cost estimate, kept next to the ledger.
+        rates = Rates(options.usage_db.with_name('model-rates.json'))
+        def refresh_rates():
+            while True:
+                try:
+                    rates.refresh()
+                except Exception:
+                    pass
+                time.sleep(60)
+        threading.Thread(target=refresh_rates, daemon=True).start()
+        Gateway.ledger = usage_ledger.UsageLedger(Gateway.key.decode(), options.usage_db, rates=rates)
         def collect_usage():
             labels_at = 0
             while True:

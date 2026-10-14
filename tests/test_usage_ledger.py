@@ -7,6 +7,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 import usage_ledger
+from pricing import RateTable, reduce_document
 from usage_ledger import UsageLedger, parse_query, reduce_record
 
 NOW = datetime(2026, 10, 11, 14, 26, 40, tzinfo=timezone.utc).timestamp()
@@ -185,6 +186,50 @@ class LedgerTests(unittest.TestCase):
         # 50 output tokens over (4200 - 900) ms of generation.
         self.assertEqual(claude['tps_p50'], 15.2)
         self.assertEqual(usage['tps_samples'], 2)
+
+    def test_usage_and_requests_carry_api_cost(self):
+        table = RateTable(reduce_document({
+            'claude-opus-5-5': {'input_cost_per_token': 4e-06, 'output_cost_per_token': 2e-05,
+                                'cache_read_input_token_cost': 2e-07, 'cache_creation_input_token_cost': 5e-06},
+            'gpt-6.1-sol': {'input_cost_per_token': 2e-06, 'output_cost_per_token': 1e-05, 'cache_read_input_token_cost': 1e-07,
+                            'input_cost_per_token_above_272k_tokens': 4e-06, 'output_cost_per_token_above_272k_tokens': 1.5e-05,
+                            'cache_read_input_token_cost_above_272k_tokens': 2e-07}}), NOW, 'fresh')
+        long_prompt = {'schema_version': 2, 'total_tokens': 300_100,
+                       'input': {'total_tokens': 300_000, 'uncached_tokens': 1_000, 'cache_read_tokens': 299_000, 'cache_write_tokens': 0},
+                       'output': {'total_tokens': 100, 'reasoning_tokens': 40}}
+        ledger = UsageLedger('k' * 32, self.path, fetch=Queue([
+            record(),
+            record(execution_id='e2', auth_index='f0e1d2c3b4a59687', provider='codex', model='gpt-6.1-sol',
+                   user_agent='codex_cli_rs/0.159.2', token_breakdown=long_prompt),
+            record(execution_id='e3', model='claude-mystery-1', timestamp='2026-10-11T13:10:00Z'),
+            record(execution_id='old', timestamp='2026-10-10T12:00:00Z')]), clock=lambda: NOW,
+            rates=type('R', (), {'table': table})())
+        ledger.drain()
+        opus = 10 * 4e-06 + 900 * 2e-07 + 100 * 5e-06 + 50 * 2e-05
+        sol = 1_000 * 4e-06 + 299_000 * 2e-07 + 100 * 1.5e-05   # whole request at the above-272k rates
+        usage = ledger.usage('24h')
+        totals = usage['totals']
+        self.assertAlmostEqual(totals['cost'], round(opus + sol, 6))
+        self.assertAlmostEqual(totals['output_cost'], round(50 * 2e-05 + 100 * 1.5e-05, 6))
+        self.assertEqual((totals['unpriced_tokens'], totals['unpriced_requests']), (1060, 1))
+        self.assertEqual(usage['unpriced_models'], ['claude-mystery-1'])
+        self.assertAlmostEqual(usage['previous']['cost'], round(opus, 6))
+        self.assertAlmostEqual(sum(p.get('cost', 0) for p in usage['series']), opus + sol, places=6)
+        codex = next(a for a in usage['accounts'] if a['auth_index'] == 'f0e1d2c3b4a59687')
+        self.assertAlmostEqual(codex['cost'], round(sol, 6))
+        mystery = next(m for m in usage['models'] if m['model'] == 'claude-mystery-1')
+        self.assertEqual((mystery['cost'], mystery['unpriced_tokens']), (0.0, 1060))
+        self.assertEqual(usage['pricing']['status'], 'fresh')
+        costs = {r['model']: r['cost'] for r in ledger.requests()['requests']}
+        self.assertAlmostEqual(costs['gpt-6.1-sol'], round(sol, 6))
+        self.assertIsNone(costs['claude-mystery-1'])
+
+    def test_usage_without_rates_reports_everything_unpriced(self):
+        ledger = self.ledger([record()])
+        ledger.drain()
+        usage = ledger.usage('24h')
+        self.assertEqual((usage['totals']['cost'], usage['totals']['unpriced_tokens']), (0.0, 1060))
+        self.assertEqual(usage['pricing']['status'], 'unavailable')
 
     def test_speed_rules(self):
         self.assertEqual(usage_ledger.speed(1000, 11000, 1000), 100.0)
