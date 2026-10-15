@@ -64,6 +64,11 @@ class ReduceTests(unittest.TestCase):
         row = reduce_record(record(token_breakdown=None, tokens={'input_tokens': 5, 'output_tokens': 7}))
         self.assertEqual((row['input'], row['output'], row['total']), (5, 7, 12))
 
+    def test_service_tier_is_the_one_upstream_served(self):
+        # Fast mode: the proxy writes priority after the client's "auto" was recorded.
+        self.assertEqual(reduce_record(record(service_tier='auto', response_service_tier='priority'))['service_tier'], 'priority')
+        self.assertEqual(reduce_record(record(service_tier='auto'))['service_tier'], 'auto')
+
     def test_codex_client(self):
         self.assertEqual(usage_ledger.client_name('codex_cli_rs/0.159.2 (Ubuntu)'), 'Codex')
         self.assertEqual(usage_ledger.client_name('Mozilla/5.0'), 'Mozilla')

@@ -15,6 +15,7 @@ import threading
 import time
 from owner_auth_policy import authorize_owner_request
 from account_preferences import AccountPreferences, PreferenceError, preference_records, attach_preferences
+from codex_fast_mode import CodexFastMode, FastModeError
 import usage_ledger
 from pricing import Rates
 from settings import PROXY_HOST, PROXY_PORT
@@ -182,6 +183,11 @@ def validate_request(method, raw_path, body):
             raise ValueError('Exact reset-ticket fields required')
         if not isinstance(payload['authIndex'], str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,256}', payload['authIndex']):
             raise ValueError('Invalid reset-ticket account')
+    elif method == 'GET' and route == '/codex-fast-mode' and not params and not body:
+        pass
+    elif method == 'POST' and route == '/codex-fast-mode' and not params:
+        if set(payload) != {'enabled'} or type(payload['enabled']) is not bool:
+            raise ValueError('Fast mode takes enabled: true or false')
     elif method == 'POST' and route == '/account-preference' and not params:
         if set(payload) != {'provider', 'authIndex', 'expectedRevision'}:
             raise ValueError('Exact preference fields required')
@@ -205,6 +211,7 @@ class Gateway(BaseHTTPRequestHandler):
     html_path = None
     quota_collector = None
     account_preferences = None
+    fast_mode = None
     ledger = None
     tickets = None
     live = None
@@ -386,6 +393,18 @@ class Gateway(BaseHTTPRequestHandler):
         if self.command == 'POST' and path == PREFIX + '/reset-ticket':
             self.reset_ticket(json.loads(body))
             return
+        if path == PREFIX + '/codex-fast-mode':
+            if self.fast_mode is None:
+                self.reply(503, b'{"error":"fast_mode_unavailable"}')
+                return
+            try:
+                state = self.fast_mode.state() if self.command == 'GET' else self.fast_mode.change(json.loads(body)['enabled'])
+                self.reply(200, json.dumps(state).encode())
+            except FastModeError as error:
+                self.reply(error.status, json.dumps({'error': error.code}).encode())
+            except (OSError, ValueError, TypeError, KeyError):
+                self.reply(502, b'{"error":"fast_mode_backend_unavailable"}')
+            return
         if self.command == 'POST' and path == PREFIX + '/requests/api-call':
             if self.quota_collector is None:
                 self.reply(503, b'{"error":"Quota collector unavailable"}')
@@ -462,6 +481,7 @@ if __name__ == '__main__':
         raise SystemExit('Management key file must be private')
     Gateway.key = options.key_file.read_bytes().strip()
     Gateway.account_preferences = AccountPreferences(Gateway.key)
+    Gateway.fast_mode = CodexFastMode(Gateway.key.decode())
     if len(Gateway.key) < 32:
         raise SystemExit('Management key is missing or too short')
     Gateway.html_path = options.html

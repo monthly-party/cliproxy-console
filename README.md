@@ -23,6 +23,11 @@ What it shows and does:
 - **Quota history**: weekly usage per account over time.
 - **Account actions**: add (OAuth sign-in), remove, set a priority account, check usage
   now, use a reset ticket (hold to confirm, re-checked with the provider first).
+- **Codex fast mode**: one switch on the Codex group asks for priority processing on every
+  Codex request through the proxy, from every client. It is a single payload override rule
+  in the proxy config (`requests.payload.override`, `service_tier: priority` for the
+  `codex` protocol), saved through the proxy's config API, which reloads it without a
+  restart; other payload rules are left as they are.
 - **Privacy mode**: emails masked by default, click one to peek; charts use aliases like
   "Claude 2". Safe to screenshot.
 
@@ -148,7 +153,11 @@ or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the 
 - Usage history starts when you enable usage statistics; the proxy keeps no earlier data.
   The ledger keeps 400 days of per-request counters, model, client and latency. It stores no
   API keys, IP addresses, headers or error bodies; session ids are hashed.
-- Using a reset ticket and changing the priority account are real account actions.
+- Using a reset ticket and changing the priority account are real account actions. So is
+  fast mode: priority processing uses more of each Codex account's quota. The ledger keeps
+  the tier upstream served (`response_service_tier`), because the client's own request
+  still says `auto` when the proxy adds priority, and the API estimate prices it at the
+  model's priority rates.
 - The API estimate is computed when you read it, so a newer price table re-prices all of
   history. The gateway fetches
   `raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json` at
@@ -157,6 +166,8 @@ or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the 
   Cache writes use the 5-minute rate because the proxy does not report the cache TTL.
 - Any UI that shows an account email must go through `emailHTML()` or `aliasOf()` in
   `dashboard.html` so privacy mode covers it.
+- Provider, model and client marks are the makers' own, copied from svgl.app (T3 Code's
+  from its repository). They are trademarks of their owners.
 
 ## License
 

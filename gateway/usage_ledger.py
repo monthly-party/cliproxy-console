@@ -157,7 +157,10 @@ def reduce_record(record):
            'latency_ms': count(record.get('latency_ms')) or None, 'ttft_ms': count(record.get('ttft_ms')) or None,
            'failed': int(failed), 'status': status if failed else (status or 200),
            'stream': int(record.get('stream') is True),
-           'reasoning_effort': text(record.get('reasoning_effort'), 32), 'service_tier': text(record.get('service_tier'), 32)}
+           'reasoning_effort': text(record.get('reasoning_effort'), 32),
+           # The tier upstream served, else the one the client asked for: with fast mode on the
+           # proxy writes priority into the request after the client's "auto" was recorded.
+           'service_tier': text(record.get('response_service_tier'), 32) or text(record.get('service_tier'), 32)}
     row.update(tokens(record))
     return row
 
