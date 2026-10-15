@@ -23,8 +23,9 @@ What it shows and does:
 - **Quota history**: weekly usage per account over time.
 - **Account actions**: add (OAuth sign-in), remove, set a priority account, check usage
   now, use a reset ticket (hold to confirm, re-checked with the provider first).
-- **Codex fast mode**: one switch on the Codex group asks for priority processing on every
-  Codex request through the proxy, from every client. It is a single payload override rule
+- **Settings**: Codex fast mode, a switch that asks for priority processing on every Codex
+  request through the proxy, from every client. The Codex group shows a Fast chip while it
+  is on. It is a single payload override rule
   in the proxy config (`requests.payload.override`, `service_tier: priority` for the
   `codex` protocol), saved through the proxy's config API, which reloads it without a
   restart; other payload rules are left as they are.
