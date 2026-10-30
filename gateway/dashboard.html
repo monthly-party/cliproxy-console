@@ -219,6 +219,8 @@ main:focus { outline: none; }
 .chip--ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: var(--ok-dim); }
 .chip--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-dim); }
 .chip--alarm { color: var(--alarm); border-color: color-mix(in srgb, var(--alarm) 35%, transparent); background: var(--alarm-dim); }
+button.chip { cursor: pointer; font-size: 0.6875rem; font-weight: 650; }
+button.chip--alarm:hover { border-color: var(--alarm); }
 .windows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; min-width: 0; }
 .win { min-width: 0; }
 .win-top { display: flex; align-items: baseline; gap: 0.4rem; font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }
@@ -566,7 +568,7 @@ dialog:not([open]) { opacity: 0; transform: scale(0.98); }
     <button class="btn btn--icon btn--ghost" data-close aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
   <div class="dlg-body">
     <ol class="steps">
-      <li id="step-open"><div><div style="margin-bottom:0.45rem">Open the provider sign-in and choose the account to add.</div>
+      <li id="step-open"><div><div style="margin-bottom:0.45rem" id="add-hint">Open the provider sign-in and choose the account to add.</div>
         <a class="btn" id="add-open" target="_blank" rel="noopener noreferrer" aria-disabled="true"><svg class="icon"><use href="#i-ext"/></svg><span>Preparing sign-in…</span></a></div></li>
       <li id="step-approve"><div>Approve access. The browser then lands on a <span class="mono">localhost</span> page that fails to load — that is expected.</div></li>
       <li id="step-paste"><div class="field">
@@ -1141,6 +1143,7 @@ function accountRow(a, colors) {
   const { weekly, five, scoped } = windowsOf(a);
   const cache = a.q?.cache;
   const statusChip = a.disabled ? '<span class="chip chip--alarm">Disabled</span>'
+    : a.status === 'error' ? `<button class="chip chip--alarm" data-relogin="${esc(a.auth_index)}" ${tipAttr('<b>The proxy cannot use this sign-in.</b><br>The saved login has usually expired or been revoked. Click to sign in again; the new login replaces this one and keeps its settings.')}>Sign in again</button>`
     : a.unavailable ? '<span class="chip chip--alarm">Unavailable</span>'
     : a.status === 'active' ? '' : `<span class="chip chip--warn">${esc(a.status || 'Status unknown')}</span>`;
   const plan = a.q?.extras?.plan_type || a.plan_type;
@@ -1725,15 +1728,25 @@ async function useReset() {
 }
 
 /* -------------------------------------------------------------- add account */
-const add = { provider: null, state: null, phase: 'idle', poll: null, opened: false };
+const add = { provider: null, state: null, phase: 'idle', poll: null, opened: false, relogin: null };
 const dlgAdd = $('#dlg-add');
 function addStatus(text, toneName = '') {
   const el = $('#add-status');
   el.hidden = !text; el.className = 'note' + (toneName ? ' note--' + toneName : ''); el.textContent = text || '';
 }
-async function startAdd(provider) {
-  Object.assign(add, { provider, state: null, phase: 'starting', opened: false });
-  $('#add-title').textContent = `Add a ${provName(provider)} account`;
+// A new sign-in for the same account is saved under the same name, so it
+// replaces the dead login in place and keeps priority and other settings.
+function startRelogin(index) {
+  const a = accounts().find((x) => x.auth_index === index);
+  if (!a) return;
+  startAdd(a.provider, index);
+}
+async function startAdd(provider, relogin = null) {
+  Object.assign(add, { provider, state: null, phase: 'starting', opened: false, relogin });
+  $('#add-title').textContent = relogin ? `Sign in again to ${provName(provider)}` : `Add a ${provName(provider)} account`;
+  $('#add-hint').innerHTML = relogin
+    ? `Open the provider sign-in and choose ${emailHTML(relogin, 'the same account', 'dialog')}. The new login replaces the saved one.`
+    : 'Open the provider sign-in and choose the account to add.';
   $('#add-icon use').setAttribute('href', '#i-' + provider);
   const link = $('#add-open');
   link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); link.querySelector('span').textContent = 'Preparing sign-in…';
@@ -1794,6 +1807,12 @@ function pollAdd() {
     if (!add.state || !dlgAdd.open) return;
     try {
       const r = await api('/oauth/status?state=' + encodeURIComponent(add.state));
+      if (r.status === 'ok' && add.relogin) {
+        add.phase = 'done'; add.state = null;
+        addStatus('Sign-in saved. Checking the account recovered…');
+        await finishRelogin(add.relogin);
+        return;
+      }
       if (r.status === 'ok') {
         add.phase = 'done'; add.state = null;
         addStatus('Account connected.', 'ok');
@@ -1811,6 +1830,24 @@ function pollAdd() {
       pollAdd();
     } catch { addStatus('The proxy could not be reached. Cancel this sign-in before starting again.', 'alarm'); }
   }, 1500);
+}
+// The proxy picks up the rewritten file a moment later, so the row can still
+// show the old error on the first read.
+async function finishRelogin(index) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await loadAccounts();
+    const a = accounts().find((x) => x.auth_index === index);
+    if (a && a.status !== 'error') {
+      addStatus('Signed in again.', 'ok');
+      $('#add-submit').textContent = 'Connected';
+      setTimeout(() => { if (dlgAdd.open) dlgAdd.close(); render(); toast('Signed in again.'); }, 900);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  render();
+  addStatus('The sign-in was saved, but this account still shows an error. If you chose a different account, it was added as a new row.', 'alarm');
+  $('#add-submit').textContent = 'Connect account';
 }
 async function cancelAdd() {
   clearTimeout(add.poll);
@@ -1876,11 +1913,13 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'privacy') setPrivacy(!state.privacy);
   else if (t.dataset.prio) setPriority(t.dataset.prio);
   else if (t.dataset.ticket) askReset(t.dataset.ticket);
+  else if (t.dataset.relogin) startRelogin(t.dataset.relogin);
   else if (t.dataset.actions) {
     if (menuFor === t) { closeMenu(); return; }
     const index = t.dataset.actions;
     openMenu(t, [
       { label: 'Check usage', icon: 'refresh', run: () => checkUsage(index) },
+      { label: 'Sign in again…', icon: 'ext', run: () => startRelogin(index) },
       { label: 'View requests', icon: 'list', run: () => { state.reqFilter = { account: index, failed: '', model: '' }; state.requests = null; location.hash = '#/requests'; } },
       { label: 'Use reset ticket…', icon: 'ticket', disabled: ticketCount(accounts().find((x) => x.auth_index === index)) < 1, run: () => askReset(index) },
       '-',
