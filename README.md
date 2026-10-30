@@ -22,7 +22,10 @@ What it shows and does:
   figure details.
 - **Quota history**: weekly usage per account over time.
 - **Account actions**: add (OAuth sign-in), remove, set a priority account, check usage
-  now, use a reset ticket (hold to confirm, re-checked with the provider first).
+  now, use a reset ticket (hold to confirm, re-checked with the provider first), sign in
+  again.
+- **Sign-in alerts**: when the proxy can no longer refresh an account's login, the overview
+  shows a red banner and that account's row pulses until you sign in again.
 - **Settings**: Codex fast mode, a switch that asks for priority processing on every Codex
   request through the proxy, from every client. The Codex group shows a Fast chip while it
   is on. It is a single payload override rule
@@ -151,6 +154,9 @@ or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the 
   restarts lose nothing.
 - The proxy watches its config file by inode. Editors that replace the file atomically won't
   trigger a reload; use `PATCH /v8/management/config`, which re-reads the file.
+- An account whose refresh token expires or is revoked (`invalid_grant`) can't be fixed by a
+  refresh; it needs a browser sign-in. Signing in again as the same account rewrites the same
+  credential file, so its priority and other settings stay.
 - Usage history starts when you enable usage statistics; the proxy keeps no earlier data.
   The ledger keeps 400 days of per-request counters, model, client and latency. It stores no
   API keys, IP addresses, headers or error bodies; session ids are hashed.
