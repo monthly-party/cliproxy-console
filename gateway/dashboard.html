@@ -195,6 +195,11 @@ main:focus { outline: none; }
 .logo { width: 14px; height: 14px; flex: none; vertical-align: -2px; margin-right: 0.4rem; }
 
 .acct--live { box-shadow: inset 3px 0 0 var(--ok); }
+.acct--signin { animation: signin 1.6s ease-in-out infinite; }
+@keyframes signin { 0%, 100% { box-shadow: inset 3px 0 0 var(--alarm); } 50% { box-shadow: inset 3px 0 0 var(--alarm); background: var(--alarm-dim); } }
+.signin-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.6rem 0.8rem; border: 1px solid color-mix(in srgb, var(--alarm) 45%, transparent);
+  border-radius: 6px; background: var(--alarm-dim); color: var(--alarm); font-size: 0.8125rem; }
+.signin-banner .acts { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-left: auto; }
 .masked { font: inherit; color: inherit; border: 0; margin: 0; padding: 0 0.25rem; border-radius: 4px; cursor: pointer; text-align: left;
   background: var(--surface-3); letter-spacing: 0.02em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: background-color 140ms ease, transform 140ms var(--ease-out); }
@@ -1099,6 +1104,7 @@ function overviewPage() {
 
   return `
   <div class="page">
+    ${signInBanner(list)}
     ${tiles}
     <section class="panel" aria-label="Accounts">
       <div class="panel-head">
@@ -1139,11 +1145,21 @@ function providerSummary(all) {
     ${loaded < all.length && state.quota ? `<span class="tone-warn" data-tip="Accounts with a fresh provider snapshot. Stale ones show the last confirmed values.">${loaded}/${all.length} fresh</span>` : ''}`;
 }
 
+// The proxy marks an account as error when its saved login stops working
+// (refresh token expired or revoked). Only a new sign-in fixes it.
+const needsSignIn = (a) => a.status === 'error' && !a.disabled;
+function signInBanner(list) {
+  const lost = list.filter(needsSignIn);
+  if (!lost.length) return '';
+  const buttons = lost.map((a) => `<button class="btn btn--sm" data-relogin="${esc(a.auth_index)}">${provIcon(a.provider)}${esc(displayName(a))}</button>`).join('');
+  const what = lost.length === 1 ? '1 account needs' : `${lost.length} accounts need`;
+  return `<section class="signin-banner" role="alert">${icon('info')}<span><b>${what} a new sign-in.</b> The proxy cannot use ${lost.length === 1 ? 'it' : 'them'} until you sign in again.</span><div class="acts">${buttons}</div></section>`;
+}
 function accountRow(a, colors) {
   const { weekly, five, scoped } = windowsOf(a);
   const cache = a.q?.cache;
   const statusChip = a.disabled ? '<span class="chip chip--alarm">Disabled</span>'
-    : a.status === 'error' ? `<button class="chip chip--alarm" data-relogin="${esc(a.auth_index)}" ${tipAttr('<b>The proxy cannot use this sign-in.</b><br>The saved login has usually expired or been revoked. Click to sign in again; the new login replaces this one and keeps its settings.')}>Sign in again</button>`
+    : needsSignIn(a) ? `<button class="chip chip--alarm" data-relogin="${esc(a.auth_index)}" ${tipAttr('<b>The proxy cannot use this sign-in.</b><br>The saved login has usually expired or been revoked. Click to sign in again; the new login replaces this one and keeps its settings.')}>Sign in again</button>`
     : a.unavailable ? '<span class="chip chip--alarm">Unavailable</span>'
     : a.status === 'active' ? '' : `<span class="chip chip--warn">${esc(a.status || 'Status unknown')}</span>`;
   const plan = a.q?.extras?.plan_type || a.plan_type;
@@ -1192,7 +1208,7 @@ function accountRow(a, colors) {
     : 'Prefer this account when it is eligible; selecting it replaces the other priority account for this provider.<hr>Applies to new bindings and genuine failover; existing sticky sessions keep their account.';
 
   const live = liveOf(a.auth_index);
-  return `<article class="acct${live?.in_flight ? ' acct--live' : ''}" data-index="${esc(a.auth_index)}">
+  return `<article class="acct${live?.in_flight ? ' acct--live' : ''}${needsSignIn(a) ? ' acct--signin' : ''}" data-index="${esc(a.auth_index)}">
     <span class="swatch" style="background:${colors[a.auth_index]}" aria-hidden="true"></span>
     <div class="who">
       <span class="email" ${state.privacy ? '' : `title="${esc(a.email || '')}"`}>${emailHTML(a.auth_index, 'Account ' + a.auth_index.slice(0, 6))}</span>
