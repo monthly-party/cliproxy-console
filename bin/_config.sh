@@ -21,14 +21,20 @@ load_client_key() {
   fi
 }
 
-# The real CLI, skipping this wrapper's own directory so a wrapper named like the CLI can't recurse.
+# The real CLI on PATH. Candidates that resolve into this repo's bin/ are skipped, so a wrapper
+# linked under the CLI's own name can't recurse. Directories are compared after resolving
+# symlinks: the wrappers are usually linked into ~/.local/bin, which is also where the real
+# claude and codex install themselves, so skipping the directory the wrapper was started
+# from would skip the real CLI too.
 real_cli() {
-  local name="$1" here dir
-  here="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+  local name="$1" own dir candidate
+  own="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[1]}")")" && pwd)"
   IFS=: read -ra dirs <<< "$PATH"
   for dir in "${dirs[@]}"; do
-    [[ "$(cd "$dir" 2>/dev/null && pwd)" == "$here" ]] && continue
-    [[ -x "$dir/$name" ]] && { echo "$dir/$name"; return; }
+    candidate="$dir/$name"
+    [[ -f "$candidate" && -x "$candidate" ]] || continue
+    [[ "$(dirname "$(readlink -f "$candidate")")" == "$own" ]] && continue
+    echo "$candidate"; return
   done
   echo "Cannot find the $name CLI on PATH." >&2
   exit 127

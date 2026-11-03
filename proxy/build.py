@@ -69,6 +69,10 @@ def main():
     (options.work / top).rename(source)
 
     manifest = json.loads((HERE / 'overlay-manifest.json').read_text())
+    missing = [relative for relative in manifest if not (HERE / 'overlay' / relative).is_file()]
+    if missing:
+        raise SystemExit('proxy/overlay is missing files listed in overlay-manifest.json: ' + ', '.join(missing)
+                         + '. Commit them (check .gitignore) or use a stock release.')
     for relative, item in manifest.items():
         if sha256(source / relative) != item['upstream_sha256']:
             raise SystemExit(f'Upstream {relative} changed since the overlay was written; port the overlay first.')

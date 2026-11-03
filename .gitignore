@@ -2,10 +2,12 @@ __pycache__/
 *.pyc
 *.deploy-tmp
 # Runtime state and secrets live in the install dir; never commit copies.
+# private/ and auth/ are anchored to the repo root: unanchored, they also hid
+# proxy/overlay/sdk/cliproxy/auth/, so the overlay's selector.go never got committed.
 usage.db*
 quota-*.json
-private/
-auth/
+/private/
+/auth/
 *.log
 # Proxy build workspace
 proxy/.build/
