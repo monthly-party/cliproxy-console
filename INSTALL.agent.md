@@ -234,7 +234,7 @@ rerun `scripts/deploy.py`. Deployment detects that executable, registers `t3-cod
 native Claude client, and disables device-profile pinning through the management API.
 It preserves other entrypoints and header settings and needs no proxy restart. The
 settings persist; later Claude patch updates follow the installed client automatically.
-Verify deploy prints the T3 compatibility message. Proxy binary upgrades remain manual.
+Verify deploy prints the T3 compatibility message. Proxy updates are started by the owner from the console's Settings page; never press it while testing.
 
 ## Step 12: Verify and hand over
 

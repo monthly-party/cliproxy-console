@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'gateway'))
 from claude_client_config import configure_t3_claude, uses_t3_proxy, ClaudeConfigurationError
 
 

@@ -29,9 +29,11 @@ import subprocess
 import sys
 import time
 
-from claude_client_config import configure_t3_claude, uses_t3_proxy, ClaudeConfigurationError
-
 REPO = Path(__file__).resolve().parents[1]
+# The gateway owns the T3 compatibility logic; deploy applies the same module.
+sys.path.insert(0, str(REPO / 'gateway'))
+from claude_client_config import configure_t3_claude, uses_t3_proxy, ClaudeConfigurationError  # noqa: E402
+
 # Linux (and WSL2) run the services under systemd --user; macOS under launchd user agents.
 MAC = platform.system() == 'Darwin'
 UNIT_DIR = Path.home() / ('Library/LaunchAgents' if MAC else '.config/systemd/user')
@@ -183,7 +185,7 @@ def main():
 
     if not options.skip_tests:
         result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q'], cwd=REPO,
-                                env={**os.environ, 'PYTHONPATH': str(REPO / 'gateway')}, capture_output=True, text=True)
+                                env={**os.environ, 'PYTHONPATH': str(REPO / 'gateway'), 'PROXY_PORT': '9'}, capture_output=True, text=True)
         if result.returncode:
             raise SystemExit('Tests failed; nothing deployed.\n' + result.stderr[-4000:])
 

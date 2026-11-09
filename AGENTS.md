@@ -7,7 +7,11 @@
   never read or copy the proxy's `private/`, `auth/` or `home/` directories.
 - Test with `make test`. Deploy by committing, then `make deploy`. Deploy restarts only the
   console and rolls back if a protected unit's PID changes.
-- Never restart the proxy unit as part of console work; clients depend on it.
+- Never restart the proxy unit as part of console work; clients depend on it. The Settings
+  page's Update button restarts it on purpose: only the owner presses it, never an agent
+  while testing. Test the update against an isolated proxy on another port.
+- `make test` points PROXY_PORT at port 9. A test that reaches the live proxy with a fake key
+  gets localhost banned from the management API for 30 minutes, so fake every proxy call.
 - Using reset tickets and changing the priority account are real account actions. Don't
   trigger them while testing.
 - Machine-specific values (paths, ports, hostnames, logins, unit names) belong in config.env,

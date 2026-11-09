@@ -192,6 +192,10 @@ main:focus { outline: none; }
 .setting h3 { margin: 0; font-size: 0.875rem; }
 .setting p { grid-column: 2 / -1; margin: 0; font-size: 0.8125rem; color: var(--ink-2); line-height: 1.5; }
 .setting .fine { grid-column: 2 / -1; margin-top: 0.35rem; }
+.setting + .setting { border-top: 1px solid var(--rule); margin-top: 0.55rem; padding-top: 0.75rem; }
+.setting h3 { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+.setting .actions { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
+.setting .note { grid-column: 2 / -1; margin-top: 0.4rem; }
 .logo { width: 14px; height: 14px; flex: none; vertical-align: -2px; margin-right: 0.4rem; }
 
 .acct--live { box-shadow: inset 3px 0 0 var(--ok); }
@@ -405,6 +409,7 @@ dialog:not([open]) { opacity: 0; transform: scale(0.98); }
    such by the script), inputs stay at 16px so iOS never zooms, and fixed chrome respects
    the notch and home indicator. */
 @media (max-width: 760px) {
+  .setting .actions { grid-column: 2 / -1; justify-content: flex-start; margin-top: 0.35rem; }
   :root { --gutter: 0.75rem; --tabbar: 58px; }
   body { font-size: 15px; }
   .shell { grid-template-columns: minmax(0, 1fr); min-height: 0; }
@@ -568,6 +573,19 @@ dialog:not([open]) { opacity: 0; transform: scale(0.98); }
   </div>
 </dialog>
 
+<dialog id="dlg-update" aria-labelledby="update-title">
+  <div class="dlg-head"><svg class="prov" aria-hidden="true"><use href="#i-grid"/></svg><h2 id="update-title">Update CLIProxyAPI?</h2></div>
+  <div class="dlg-body">
+    <dl class="kv" id="update-facts"></dl>
+    <p style="margin:0">The proxy restarts for a few seconds. Claude and Codex requests in progress stop, and clients retry them.</p>
+    <p class="fine" style="margin:0">Downloads the stock release from GitHub and checks its SHA-256 before installing. The current binary is backed up. If the new version doesn't start, the old one goes back automatically.</p>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" data-close>Cancel</button>
+    <button class="btn btn--primary hold" id="update-confirm"><span class="fill" aria-hidden="true"></span><span id="update-label">Hold to update</span></button>
+  </div>
+</dialog>
+
 <dialog id="dlg-add" aria-labelledby="add-title">
   <div class="dlg-head"><svg class="prov" id="add-icon"><use href="#i-claude"/></svg><h2 id="add-title">Add account</h2>
     <button class="btn btn--icon btn--ghost" data-close aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
@@ -596,6 +614,26 @@ const TZ = -new Date().getTimezoneOffset();
 const SLOTS = 8;
 const LOW = 40, CRITICAL = 15;           // remaining-% thresholds, as in the previous console
 const QUOTA_NOTE = 'Usage and reset times come from the provider. Credentials stay on the proxy; no reset credits are spent.';
+const VERSION_ERRORS = {
+  update_in_progress: 'An update is already running.',
+  update_unavailable: 'Updates need the console unit from the latest deploy (make deploy with --units).',
+  proxy_unavailable: 'The proxy did not answer. Nothing was changed.',
+  source_build: 'This proxy was built from source with the weekly-reset overlay. Update it with proxy/build.py.',
+  not_latest: 'A newer release came out since the last check. Check again, then update.',
+  unsupported_platform: 'No stock release is published for this machine.',
+  asset_missing: 'The release has no archive for this machine.',
+  checksum_unavailable: 'The release has no matching published checksum, so nothing was installed.',
+  checksum_mismatch: 'The download did not match the published checksum, so nothing was installed.',
+  binary_missing: 'The release archive has no proxy binary, so nothing was installed.',
+  binary_version_mismatch: 'The downloaded binary reported a different version, so nothing was installed.',
+  backup_failed: 'The current binary could not be backed up, so nothing was installed.',
+  new_version_not_healthy: 'The new version did not start, so the previous version was put back.',
+  rollback_failed: 'The new version did not start and the previous one could not be restored. Check the proxy service.',
+  update_failed: 'The update stopped before installing. Nothing was changed.',
+  download_too_large: 'The download was larger than expected, so nothing was installed.',
+  t3_setting_not_saved: 'The proxy did not save the T3 setting. It needs CLIProxyAPI 8.0.62 or newer.',
+};
+const UPDATE_PHASES = { downloading: 'Downloading', verifying: 'Checking the download', installing: 'Installing', restarting: 'Restarting the proxy' };
 const FAST_ERRORS = {
   unmanaged_payload_rules: 'The proxy config has payload rules this console does not manage. Nothing was changed.',
   fast_mode_not_confirmed: 'The proxy did not confirm the change. Refresh before retrying.',
@@ -627,6 +665,7 @@ const state = {
   privacy: localStorage.getItem('privacy') !== 'off', revealed: new Set(),
   proxyOk: null, liveView: null, savingPriority: null, busy: new Set(), dirty: false, now: Date.now(),
   fast: null, savingFast: false,
+  versions: null, versionsBusy: false,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -1414,6 +1453,7 @@ function settingsPage() {
   const off = fast == null || state.savingFast;
   return `<div class="page">
     <div class="page-head"><h1>Settings</h1></div>
+    ${versionsPanel()}
     <section class="panel" aria-labelledby="set-codex">
       <div class="panel-head"><span class="label" id="set-codex">Codex</span></div>
       <div class="panel-body">
@@ -1426,6 +1466,85 @@ function settingsPage() {
       </div>
     </section>
   </div>`;
+}
+const releaseLine = (v) => (v || '').split('.').slice(0, 2).join('.');
+const lineNewer = (a, b) => { const x = releaseLine(a).split('.').map(Number), y = releaseLine(b).split('.').map(Number); return x.length === 2 && y.length === 2 && (x[0] > y[0] || (x[0] === y[0] && x[1] > y[1])); };
+function installedChip(c) {
+  if (!c?.installed?.version) return '<span class="chip" data-tip="The client did not report a version">installed: unknown</span>';
+  return `<span class="chip" ${c.installed.binary ? `data-tip="${esc(c.installed.binary + ' --version')}"` : ''}>${esc(c.installed.version)} installed</span>`;
+}
+function updateNote(job) {
+  if (!job || job.phase === 'idle') return '';
+  if (UPDATE_PHASES[job.phase]) return `<div class="note" role="status"><span class="dot dot--warn"></span><span>${esc(UPDATE_PHASES[job.phase])} ${esc(job.to)}…</span></div>`;
+  const when = job.finished_at ? ` ${esc(ago(job.finished_at * 1000))}` : '';
+  if (job.phase === 'done') return `<div class="note note--ok" role="status">Updated from ${esc(job.from)} to ${esc(job.to)}${when}. The previous binary is kept as a backup.</div>`;
+  return `<div class="note note--alarm" role="status">${esc(VERSION_ERRORS[job.error] || 'The update did not finish.')}${when ? ` <span style="opacity:0.8">(${when.trim()})</span>` : ''}</div>`;
+}
+function proxySetting(v) {
+  const proxy = v?.proxy, run = proxy?.running, latest = proxy?.latest || {}, job = v?.update;
+  const busy = state.versionsBusy || UPDATE_PHASES[job?.phase];
+  const checked = latest.checked_at ? `checked ${esc(ago(latest.checked_at * 1000))}` : 'not checked yet';
+  let status;
+  if (!v) status = 'Reading versions…';
+  else if (!run) status = 'The proxy did not answer.';
+  else if (run.source_build) status = `Built from source with the weekly-reset overlay. Update it with proxy/build.py. Latest stock release ${esc(latest.version || 'unknown')}, ${checked}.`;
+  else if (latest.error && !latest.version) status = `Could not reach GitHub to check for a newer release (${checked}).`;
+  else if (proxy.update_available) status = `Version ${esc(latest.version)} is out${latest.published_at ? `, published ${esc(stamp(Date.parse(latest.published_at)))}` : ''}. ${latest.url ? `<a href="${esc(latest.url)}" target="_blank" rel="noopener noreferrer">Release notes</a>` : ''}`;
+  else status = `Up to date. Latest release ${esc(latest.version)}, ${checked}.`;
+  const updateBtn = proxy?.update_available && proxy.can_update ? `<button class="btn btn--primary btn--sm" id="ver-update" ${busy ? 'disabled' : ''}>Update to ${esc(latest.version)}</button>` : '';
+  return `<div class="setting">
+    ${icon('grid', 'prov')}<h3>CLIProxyAPI ${run ? `<span class="chip" ${run.commit ? `data-tip="Commit ${esc(run.commit)}${run.built_at ? ' · built ' + esc(stamp(Date.parse(run.built_at))) : ''}"` : ''}>${esc(run.version)}</span>` : ''}${proxy?.update_available ? '<span class="chip chip--signal">Update available</span>' : ''}</h3>
+    <div class="actions"><button class="btn btn--sm" id="ver-check" ${busy || !v ? 'disabled' : ''}>Check now</button>${updateBtn}</div>
+    <p>${status}</p>
+    ${updateNote(job)}
+    <p class="fine">Serves both Claude and Codex. New models and client versions usually arrive with proxy updates. Updating restarts the proxy for a few seconds.</p>
+  </div>`;
+}
+function claudeSetting(c) {
+  const builtin = c?.builtin ? esc(c.builtin) : 'unknown';
+  let status, chip, action = '';
+  if (!c) { status = 'Reading versions…'; chip = ''; }
+  else if (c.t3_recognized == null) { status = 'The proxy did not report its Claude settings.'; chip = ''; }
+  else if (c.stabilized || c.pinned_agent) {
+    status = c.pinned_agent ? `Every request is sent as <span class="mono">${esc(c.pinned_agent)}</span>, set in the proxy config.` : `Device-profile pinning is on, so requests are sent as Claude Code ${builtin}.`;
+    chip = '<span class="chip chip--warn">Pinned</span>';
+  } else if (c.t3_recognized) {
+    status = 'Requests keep the version of the Claude Code that sent them, from T3 and the CLI alike. Updating Claude Code needs no change here.';
+    chip = '<span class="chip chip--ok">Follows client</span>';
+  } else {
+    status = `T3 requests are sent as Claude Code ${builtin}, the version built into the proxy. Newer models can refuse it. Claude Code CLI requests keep their own version.`;
+    chip = '<span class="chip chip--warn">T3 sent as ' + builtin + '</span>';
+    action = `<button class="btn btn--primary btn--sm" id="ver-t3" ${state.versionsBusy ? 'disabled' : ''}>Follow installed version</button>`;
+  }
+  const newerLine = c?.installed?.version && c?.builtin && lineNewer(c.installed.version, c.builtin)
+    ? `<div class="note"><span class="dot dot--warn"></span><span>Claude Code ${esc(releaseLine(c.installed.version))} is a newer release line than this proxy knows (${esc(releaseLine(c.builtin))}). If requests start failing, update the proxy.</span></div>` : '';
+  return `<div class="setting">
+    ${provIcon('claude')}<h3>Claude Code ${c ? installedChip(c) : ''}${chip}</h3>
+    <div class="actions">${action}</div>
+    <p>${status}</p>
+    ${newerLine}
+    <p class="fine">Built into this proxy: Claude Code ${builtin}, used for clients the proxy doesn't recognize.</p>
+  </div>`;
+}
+function codexSetting(c) {
+  const builtin = c?.builtin ? esc(c.builtin) : 'unknown';
+  const status = !c ? 'Reading versions…' : c.pinned_agent
+    ? `Every request is sent as <span class="mono">${esc(c.pinned_agent)}</span>, set in the proxy config.`
+    : 'Requests keep the version of the client that sent them. Updating Codex needs no change here.';
+  const chip = !c ? '' : c.pinned_agent ? '<span class="chip chip--warn">Pinned</span>' : '<span class="chip chip--ok">Follows client</span>';
+  return `<div class="setting">
+    ${provIcon('codex')}<h3>Codex ${c ? installedChip(c) : ''}${chip}</h3>
+    <div class="actions"></div>
+    <p>${status}</p>
+    <p class="fine">Built into this proxy: Codex ${builtin}, used only when a client sends no version. The Codex model list ships with the proxy, so new Codex models arrive with proxy updates.</p>
+  </div>`;
+}
+function versionsPanel() {
+  const v = state.versions;
+  return `<section class="panel" aria-labelledby="set-versions">
+      <div class="panel-head"><span class="label" id="set-versions">Versions and updates</span></div>
+      <div class="panel-body">${proxySetting(v)}${claudeSetting(v?.claude)}${codexSetting(v?.codex)}</div>
+    </section>`;
 }
 function requestsPage() {
   const colors = slots(), data = state.requests, f = state.reqFilter, all = labels();
@@ -1558,6 +1677,11 @@ async function loadUsage(range) {
   try { state.usage[range] = await api(`/dashboard/usage?range=${range}&tz=${TZ}`); if (range === '24h') state.usage24 = state.usage[range]; }
   catch { /* keep the last good view */ }
 }
+async function loadVersions() {
+  try { state.versions = await api('/proxy-versions'); } catch { /* keep the last view */ }
+  // A reload during an update keeps following it.
+  if (UPDATE_PHASES[state.versions?.update?.phase] && !updatePoll) followUpdate();
+}
 async function loadFast() { try { state.fast = await api('/codex-fast-mode'); } catch { /* keep the last state */ } }
 async function loadLive() { try { state.liveView = await api('/dashboard/live'); } catch { /* keep the last view */ } }
 async function loadStatus() { try { state.status = await api('/dashboard/status'); } catch { state.status = null; } }
@@ -1579,6 +1703,7 @@ async function refresh({ quiet = false } = {}) {
   const jobs = [loadAccounts(), loadStatus(), loadLive(), loadFast(), loadUsage('24h'), loadUsage('7d')];
   if (state.route === 'usage') jobs.push(loadUsage(state.usageRange), loadHistory(state.historyRange));
   if (state.route === 'requests') jobs.push(loadRequests(), loadUsage('30d'));
+  if (state.route === 'settings') jobs.push(loadVersions());
   await Promise.all(jobs);
   btn.classList.remove('spin');
   render();
@@ -1594,6 +1719,50 @@ async function setFast(enabled) {
     toast(FAST_ERRORS[e.code] || 'Fast mode could not be changed. Refresh and retry.', 'alarm');
   }
   state.savingFast = false; render();
+}
+async function versionAction(path, body, done) {
+  state.versionsBusy = true; render();
+  try { state.versions = await api(path, { method: 'POST', body }); if (done) toast(done); }
+  catch (e) { toast(VERSION_ERRORS[e.code] || 'The proxy could not be reached. Refresh and retry.', 'alarm'); }
+  state.versionsBusy = false; render();
+}
+const checkVersions = () => versionAction('/proxy-versions/check', {}, null);
+const followClaude = () => versionAction('/proxy-versions/recognize-t3', {}, 'T3 requests now keep the installed Claude Code version.');
+function askUpdate() {
+  const p = state.versions?.proxy;
+  if (!p?.update_available) return;
+  $('#update-facts').innerHTML = `<dt>Running</dt><dd>${esc(p.running.version)}</dd><dt>New</dt><dd>${esc(p.latest.version)}${p.latest.published_at ? ` <span class="muted" style="font-weight:400">published ${esc(stamp(Date.parse(p.latest.published_at)))}</span>` : ''}</dd>`;
+  $('#update-label').textContent = 'Hold to update';
+  $('#update-confirm').disabled = false;
+  $('#dlg-update').showModal();
+}
+let updatePoll = null;
+async function runUpdate() {
+  const version = state.versions?.proxy?.latest?.version, btn = $('#update-confirm');
+  btn.disabled = true; delete btn.dataset.holding;
+  $('#update-label').textContent = 'Starting…';
+  try {
+    state.versions = await api('/proxy-update', { method: 'POST', body: { version } });
+    $('#dlg-update').close();
+    followUpdate();
+  } catch (e) {
+    $('#dlg-update').close();
+    toast(VERSION_ERRORS[e.code] || 'The update could not start.', 'alarm');
+  }
+  render();
+}
+function followUpdate() {
+  clearInterval(updatePoll);
+  updatePoll = setInterval(async () => {
+    await loadVersions();
+    const job = state.versions?.update;
+    if (!UPDATE_PHASES[job?.phase]) {
+      clearInterval(updatePoll); updatePoll = null;
+      if (job?.phase === 'done') toast(`CLIProxyAPI updated to ${job.to}.`);
+      else toast(VERSION_ERRORS[job?.error] || 'The update did not finish.', 'alarm');
+    }
+    render();
+  }, 2000);
 }
 async function setPriority(index) {
   const a = accounts().find((x) => x.auth_index === index);
@@ -1725,16 +1894,15 @@ async function useReset() {
     btn.disabled = ['recently_used', 'in_progress', 'no_ticket', 'account_unavailable'].includes(e.code);
   }
 }
-{
+function holdToConfirm(btn, action) {
   // Hold-to-confirm: 1.2 s press (pointer, Space or Enter). Releasing early cancels.
-  const btn = $('#reset-confirm');
   let timer = null;
   const start = (e) => {
     if (btn.disabled || timer) return;
     if (e.type === 'keydown' && e.key !== ' ' && e.key !== 'Enter') return;
     if (e.type === 'keydown') e.preventDefault();
     btn.dataset.holding = '';
-    timer = setTimeout(() => { timer = null; useReset(); }, 1200);
+    timer = setTimeout(() => { timer = null; action(); }, 1200);
   };
   const stop = () => { if (!timer) return; clearTimeout(timer); timer = null; delete btn.dataset.holding; };
   btn.addEventListener('pointerdown', start);
@@ -1742,6 +1910,8 @@ async function useReset() {
   ['pointerup', 'pointerleave', 'pointercancel', 'keyup', 'blur'].forEach((ev) => btn.addEventListener(ev, stop));
   btn.addEventListener('click', (e) => e.preventDefault());
 }
+holdToConfirm($('#reset-confirm'), useReset);
+holdToConfirm($('#update-confirm'), runUpdate);
 
 /* -------------------------------------------------------------- add account */
 const add = { provider: null, state: null, phase: 'idle', poll: null, opened: false, relogin: null };
@@ -1947,6 +2117,9 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.history) { state.historyRange = t.dataset.history; render(); loadHistory(state.historyRange).then(render); }
   else if (t.id === 'more') { t.disabled = true; loadRequests(true).then(render); }
   else if (t.id === 'refresh') refresh();
+  else if (t.id === 'ver-check') checkVersions();
+  else if (t.id === 'ver-t3') followClaude();
+  else if (t.id === 'ver-update') askUpdate();
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'filter') { state.filter = e.target.value.trim().toLowerCase(); render(); }

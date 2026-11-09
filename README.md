@@ -36,6 +36,15 @@ What it shows and does:
   wrapper, deploying the console registers T3's client identifier and turns off
   device-profile pinning. Requests then carry the installed Claude client's version,
   including future patch updates, without a version-sync job.
+- **Versions and updates** (Settings): the running CLIProxyAPI version and the latest stock
+  release on GitHub, with an Update button (hold to confirm). The update downloads the release
+  for this machine, checks its SHA-256 against GitHub's asset digest and `checksums.txt`,
+  checks the new binary reports that version, backs up the current binary into `$BACKUP_DIR`,
+  restarts only the proxy service and rolls back if the new version doesn't answer within a
+  minute. Source builds (`proxy/build.py`, version `...+console`) are never replaced. For
+  Claude and Codex it shows the installed client version (the executable T3 runs), the
+  fallback version built into the proxy, and whether requests keep the client's own version;
+  Claude has a button to register T3 when it isn't.
 - **Privacy mode**: emails masked by default, click one to peek; charts use aliases like
   "Claude 2". Safe to screenshot.
 
@@ -172,7 +181,7 @@ provider skip this configuration step.
 - T3 uses its selected Claude executable through `claude-proxy`; the proxy does not install
   Claude or change T3's model settings. Newer Claude patches within the supported major/minor
   release line pass through automatically. A new release line or protocol can still require
-  a CLIProxyAPI update. Proxy binary upgrades remain manual.
+  a CLIProxyAPI update. Update the proxy from Settings when it offers a newer release; nothing updates it on its own.
 - An account whose refresh token expires or is revoked (`invalid_grant`) can't be fixed by a
   refresh; it needs a browser sign-in. Signing in again as the same account rewrites the same
   credential file, so its priority and other settings stay.

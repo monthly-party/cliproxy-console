@@ -17,6 +17,9 @@
     <string>--quota-cache</string><string>@CONSOLE_DIR@/quota-cache.json</string>
     <string>--usage-db</string><string>@CONSOLE_DIR@/usage.db</string>
     <string>--proxy-log</string><string>@PROXY_LOG@</string>
+    <string>--proxy-binary</string><string>@PROXY_BINARY@</string>
+    <string>--proxy-unit</string><string>@PROXY_UNIT@</string>
+    <string>--backup-dir</string><string>@BACKUP_DIR@</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>PROXY_PORT</key><string>@PROXY_PORT@</string></dict>

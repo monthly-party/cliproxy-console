@@ -16,6 +16,7 @@ import time
 from owner_auth_policy import authorize_owner_request
 from account_preferences import AccountPreferences, PreferenceError, preference_records, attach_preferences
 from codex_fast_mode import CodexFastMode, FastModeError
+from proxy_versions import ProxyVersions, VersionError
 import usage_ledger
 from pricing import Rates
 from settings import PROXY_HOST, PROXY_PORT
@@ -188,6 +189,16 @@ def validate_request(method, raw_path, body):
     elif method == 'POST' and route == '/codex-fast-mode' and not params:
         if set(payload) != {'enabled'} or type(payload['enabled']) is not bool:
             raise ValueError('Fast mode takes enabled: true or false')
+    elif method == 'GET' and route == '/proxy-versions' and not params and not body:
+        pass
+    elif method == 'POST' and route in {'/proxy-versions/check', '/proxy-versions/recognize-t3'} and not params:
+        if payload:
+            raise ValueError('No fields expected')
+    elif method == 'POST' and route == '/proxy-update' and not params:
+        import re
+        if set(payload) != {'version'} or not isinstance(payload['version'], str) \
+                or not re.fullmatch(r'\d{1,4}\.\d{1,4}\.\d{1,4}', payload['version']):
+            raise ValueError('Exact release version required')
     elif method == 'POST' and route == '/account-preference' and not params:
         if set(payload) != {'provider', 'authIndex', 'expectedRevision'}:
             raise ValueError('Exact preference fields required')
@@ -212,6 +223,7 @@ class Gateway(BaseHTTPRequestHandler):
     quota_collector = None
     account_preferences = None
     fast_mode = None
+    versions = None
     ledger = None
     tickets = None
     live = None
@@ -299,6 +311,25 @@ class Gateway(BaseHTTPRequestHandler):
                 if entry is not None:
                     entry['next_check_at'] = 0
         self.reply(200, json.dumps(result).encode())
+
+    def proxy_versions(self, route, body):
+        if self.versions is None:
+            self.reply(503, b'{"error":"versions_unavailable"}')
+            return
+        try:
+            if route == '/proxy-versions/check':
+                result = self.versions.overview(force=True)
+            elif route == '/proxy-versions/recognize-t3':
+                result = self.versions.recognize_t3()
+            elif route == '/proxy-update':
+                result = self.versions.start_update(json.loads(body)['version'])
+            else:
+                result = self.versions.overview()
+            self.reply(200, json.dumps(result).encode())
+        except VersionError as error:
+            self.reply(error.status, json.dumps({'error': error.code}).encode())
+        except (OSError, ValueError, TypeError, KeyError):
+            self.reply(502, b'{"error":"versions_unavailable"}')
 
     def live_view(self):
         """In-flight requests and bound sessions per account, keyed by auth index."""
@@ -405,6 +436,10 @@ class Gateway(BaseHTTPRequestHandler):
             except (OSError, ValueError, TypeError, KeyError):
                 self.reply(502, b'{"error":"fast_mode_backend_unavailable"}')
             return
+        if path in {PREFIX + '/proxy-versions', PREFIX + '/proxy-versions/check',
+                    PREFIX + '/proxy-versions/recognize-t3', PREFIX + '/proxy-update'}:
+            self.proxy_versions(path.removeprefix(PREFIX), body)
+            return
         if self.command == 'POST' and path == PREFIX + '/requests/api-call':
             if self.quota_collector is None:
                 self.reply(503, b'{"error":"Quota collector unavailable"}')
@@ -472,6 +507,10 @@ if __name__ == '__main__':
     parser.add_argument('--usage-db', type=Path)
     parser.add_argument('--port', type=int, default=8318)
     parser.add_argument('--proxy-log', type=Path)
+    # The in-console proxy update needs all three; without them versions are read-only.
+    parser.add_argument('--proxy-binary', type=Path)
+    parser.add_argument('--proxy-unit', default='')
+    parser.add_argument('--backup-dir', type=Path)
     options = parser.parse_args()
     if bool(options.owner_login) != bool(options.origin):
         raise SystemExit('Owner login and HTTPS origin must be configured together')
@@ -482,6 +521,8 @@ if __name__ == '__main__':
     Gateway.key = options.key_file.read_bytes().strip()
     Gateway.account_preferences = AccountPreferences(Gateway.key)
     Gateway.fast_mode = CodexFastMode(Gateway.key.decode())
+    Gateway.versions = ProxyVersions(Gateway.key.decode(), options.proxy_binary, options.proxy_unit,
+                                     options.backup_dir, Path.home() / '.t3/userdata/settings.json')
     if len(Gateway.key) < 32:
         raise SystemExit('Management key is missing or too short')
     Gateway.html_path = options.html
