@@ -32,6 +32,10 @@ What it shows and does:
   in the proxy config (`requests.payload.override`, `service_tier: priority` for the
   `codex` protocol), saved through the proxy's config API, which reloads it without a
   restart; other payload rules are left as they are.
+- **T3 compatibility**: when an enabled T3 provider uses this project's `claude-proxy`
+  wrapper, deploying the console registers T3's client identifier and turns off
+  device-profile pinning. Requests then carry the installed Claude client's version,
+  including future patch updates, without a version-sync job.
 - **Privacy mode**: emails masked by default, click one to peek; charts use aliases like
   "Claude 2". Safe to screenshot.
 
@@ -105,7 +109,8 @@ management routes, and never sends a token or the management key to the page.
 - [Tailscale](https://tailscale.com) with HTTPS enabled, for `tailscale serve`.
 - CLIProxyAPI v8. Build it with `proxy/build.py` (needs Go; see `proxy/upstream.json`) to
   get the weekly-reset routing and the loopback patch, or use a stock release with another
-  routing strategy.
+  routing strategy. T3 compatibility requires a stock release of 8.0.62 or newer; the
+  optional source overlay is pinned to an older version and must be ported for T3 support.
 - One or more Claude Pro/Max and/or ChatGPT Plus/Pro accounts.
 
 ## Manual setup
@@ -116,7 +121,8 @@ the machine first; `scripts/doctor.py` checks the whole install at any time.
 1. **Settings.** `mkdir -p ~/.config/cliproxy-console && cp config.env.example ~/.config/cliproxy-console/config.env`,
    then edit it: install directory, ports, your Tailscale https origin and login, unit names.
    Every other step reads this file.
-2. **Proxy binary.** `proxy/build.py --out "$PROXY_BINARY"` (or download a release).
+2. **Proxy binary.** `proxy/build.py --out "$PROXY_BINARY"` or download a stock release.
+   For T3, use stock version 8.0.62 or newer and verify its published checksum.
 3. **Keys and proxy config.** Generate two keys into files with
    `umask 077; openssl rand -hex 32 > "$MANAGEMENT_KEY_FILE"` (and the same for
    `$CLIENT_KEY_FILE`), then run `scripts/make-proxy-config.py` (add `--stock` for a stock
@@ -132,6 +138,8 @@ the machine first; `scripts/doctor.py` checks the whole install at any time.
 7. **Add accounts** with the console's Add buttons, or `bin/sign-in-claude` / `bin/sign-in-codex`.
 8. **Point clients at the proxy.** Put `bin/claude-proxy` and `bin/codex-proxy` on your PATH
    (symlinks are fine) and use them instead of `claude` and `codex`.
+   After selecting `claude-proxy` as an enabled T3 Claude provider's executable, run
+   `make deploy` once to register T3 compatibility. Later Claude patch updates need no setup.
 
 ## Develop
 
@@ -145,6 +153,13 @@ make deploy        # install the committed tree into $CONSOLE_DIR
 tests, backs up what it replaces into `$BACKUP_DIR`, restarts only the console (and only when
 Python or its unit changed), health-checks the page and API, and rolls back if a check fails
 or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the proxy.
+When an enabled T3 Claude provider selects this project's wrapper, deploy uses the
+proxy's management API before installing files to add `t3-code` to
+`upstream.claude.header-defaults.native-entrypoints` and disable `stabilize-device-profile`.
+Other entrypoints and header settings are preserved. Correct settings are left alone,
+and `make deploy-check` does not write any settings. This compatibility configuration
+persists independently of a console-file rollback. Installations without a matching T3
+provider skip this configuration step.
 
 ## Things worth knowing
 
@@ -154,6 +169,10 @@ or any unit in `PROTECTED_UNITS` changed PID. It never installs or restarts the 
   restarts lose nothing.
 - The proxy watches its config file by inode. Editors that replace the file atomically won't
   trigger a reload; use `PATCH /v8/management/config`, which re-reads the file.
+- T3 uses its selected Claude executable through `claude-proxy`; the proxy does not install
+  Claude or change T3's model settings. Newer Claude patches within the supported major/minor
+  release line pass through automatically. A new release line or protocol can still require
+  a CLIProxyAPI update. Proxy binary upgrades remain manual.
 - An account whose refresh token expires or is revoked (`invalid_grant`) can't be fixed by a
   refresh; it needs a browser sign-in. Signing in again as the same account rewrites the same
   credential file, so its priority and other settings stay.

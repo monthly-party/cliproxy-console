@@ -128,6 +128,10 @@ Don't display the keys. Tell the user where they are stored.
 
 ## Step 5: Get the proxy binary
 
+**For T3 with `claude-proxy`:** use a stock CLIProxyAPI release of 8.0.62 or newer.
+The optional source overlay is pinned to an older version and must be ported for T3
+support. Other clients can continue using either installation method below.
+
 Skip this step if `"$PROXY_BINARY"` already exists and the user wants to keep it.
 
 **Build from source** (weekly-reset routing):
@@ -141,10 +145,10 @@ upstream changed, applies `proxy/patches/` and `proxy/overlay/`, runs the routin
 and builds. It takes about a minute plus the download time. If it fails, show the user
 the last 30 lines and stop.
 
-**Stock release** (round-robin routing): download the CLIProxyAPI release matching the
-`tag` in `proxy/upstream.json` for this OS and CPU from
-https://github.com/router-for-me/CLIProxyAPI/releases. Verify it against the release's
-checksum file if one is published. Extract the server binary to `"$PROXY_BINARY"` and
+**Stock release** (round-robin routing): download the latest stable CLIProxyAPI release
+for this OS and CPU from https://github.com/router-for-me/CLIProxyAPI/releases. For T3,
+check that it is 8.0.62 or newer. Verify the archive against the published checksum or
+release asset SHA-256 digest. Extract the server binary to `"$PROXY_BINARY"` and
 `chmod 700` it. Remember to pass `--stock` in step 6.
 
 ## Step 6: Write the proxy config
@@ -224,6 +228,13 @@ claude-proxy --version; codex-proxy --version
 If `~/.local/bin` isn't on `PATH`, tell the user rather than editing shell files
 yourself, unless they ask you to. The wrappers read `config.env` and the client key file
 themselves. They don't change the user's normal `claude` and `codex` commands.
+
+When an enabled T3 Claude provider is configured to use this project's `claude-proxy`,
+rerun `scripts/deploy.py`. Deployment detects that executable, registers `t3-code` as a
+native Claude client, and disables device-profile pinning through the management API.
+It preserves other entrypoints and header settings and needs no proxy restart. The
+settings persist; later Claude patch updates follow the installed client automatically.
+Verify deploy prints the T3 compatibility message. Proxy binary upgrades remain manual.
 
 ## Step 12: Verify and hand over
 

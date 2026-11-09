@@ -29,6 +29,8 @@ import subprocess
 import sys
 import time
 
+from claude_client_config import configure_t3_claude, uses_t3_proxy, ClaudeConfigurationError
+
 REPO = Path(__file__).resolve().parents[1]
 # Linux (and WSL2) run the services under systemd --user; macOS under launchd user agents.
 MAC = platform.system() == 'Darwin'
@@ -212,6 +214,13 @@ def main():
           f'  console restart: {"yes" if needs_restart else "no"}')
     if options.dry_run:
         return
+    try:
+        if uses_t3_proxy(Path.home() / '.t3/userdata/settings.json', REPO / 'bin/claude-proxy'):
+            configure_t3_claude(f"http://127.0.0.1:{CONFIG['PROXY_PORT']}",
+                               Path(CONFIG['MANAGEMENT_KEY_FILE']).read_text().strip())
+            print('T3 Claude requests follow the installed client version; proxy restart not needed.')
+    except (OSError, ClaudeConfigurationError) as error:
+        raise SystemExit(f'T3 compatibility setup failed; console files unchanged. {error}') from None
     manifest = {'commit': commit, 'deployed_at': datetime.now(timezone.utc).isoformat(),
                 'files': {n: sha(p) for n, p in files.items()}}
     if not changed and not unit_changes:
